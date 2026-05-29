@@ -1,32 +1,66 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os
-import sqlite3
 import yfinance as yf
 from datetime import datetime, timedelta
+import json
+import gspread
+from google.oauth2.service_account import Credentials
 
 # ==========================================
-# 1. APPENS INSTÄLLNINGAR & DATABAS
+# 1. APPENS INSTÄLLNINGAR & GOOGLE SHEETS
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v1.0", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v1.1", page_icon="🚀", layout="wide")
 
-DB_NAMN = 'kvant_historik.db'
+def get_gspread_client():
+    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds_dict = json.loads(st.secrets["google_credentials"])
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    return gspread.authorize(creds)
 
-def initiera_databas():
-    conn = sqlite3.connect(DB_NAMN)
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS portfolj_historik (
-            datum TEXT PRIMARY KEY,
-            portfolj_varde REAL,
-            omx_index REAL
-        )
-    ''')
-    conn.commit()
-    conn.close()
+def ladda_historik_gspread():
+    try:
+        gc = get_gspread_client()
+        sh = gc.open_by_url(st.secrets["google_sheet_url"])
+        worksheet = sh.worksheet("Historik")
+        data = worksheet.get_all_records()
+        df = pd.DataFrame(data)
+        if df.empty:
+            return pd.DataFrame(columns=['datum', 'portfolj_varde', 'omx_index'])
+        df['datum'] = df['datum'].astype(str)
+        df['portfolj_varde'] = pd.to_numeric(df['portfolj_varde'], errors='coerce').fillna(0)
+        df['omx_index'] = pd.to_numeric(df['omx_index'], errors='coerce').fillna(0)
+        return df.sort_values('datum').reset_index(drop=True)
+    except Exception as e:
+        return pd.DataFrame(columns=['datum', 'portfolj_varde', 'omx_index'])
 
-initiera_databas()
+def spara_historik_gspread(datum_str, portfolj_kronor, omx_stangning):
+    try:
+        gc = get_gspread_client()
+        sh = gc.open_by_url(st.secrets["google_sheet_url"])
+        worksheet = sh.worksheet("Historik")
+        
+        data = worksheet.get_all_values()
+        if not data:
+            worksheet.append_row(["datum", "portfolj_varde", "omx_index"])
+            data = [["datum", "portfolj_varde", "omx_index"]]
+            
+        rows = data[1:]
+        found_row = None
+        for i, row in enumerate(rows):
+            if row and row[0] == datum_str:
+                found_row = i + 2  # +1 för header, +1 för 1-baserat index
+                break
+                
+        if found_row:
+            worksheet.update_cell(found_row, 2, portfolj_kronor)
+            worksheet.update_cell(found_row, 3, omx_stangning)
+        else:
+            worksheet.append_row([datum_str, portfolj_kronor, omx_stangning])
+        return True
+    except Exception as e:
+        st.error(f"Fel vid kommunikation med Google Sheets: {e}")
+        return False
 
 # ==========================================
 # 2. SIDOMENY OCH DELAD DATALADDNING
@@ -86,13 +120,9 @@ def ladda_och_tvatta_basdata(fil):
 # 3. SIDORNAS LOGIK
 # ==========================================
 
-# ---------------------------------------------------------
-# ÖVERSIKT & HISTORIK (SQLite + Yahoo Finance)
-# ---------------------------------------------------------
 if meny_val == "📊 Översikt & Historik":
-    st.title("📊 Portföljöversikt & Historisk Utveckling")
+    st.title("📊 Portföljöversikt & Evig Historik (Google Sheets)")
     
-    # Formulär för att lägga till historik
     with st.expander("➕ Logga ett nytt portföljvärde"):
         with st.form("logga_varde"):
             valt_datum = st.date_input("Välj datum för loggning", datetime.now())
@@ -110,27 +140,21 @@ if meny_val == "📊 Översikt & Historik":
                         
                         if not hist.empty:
                             omx_stangning = float(hist['Close'].iloc[0])
-                            
-                            conn = sqlite3.connect(DB_NAMN)
-                            c = conn.cursor()
-                            c.execute('INSERT OR REPLACE INTO portfolj_historik VALUES (?, ?, ?)', (datum_str, portfolj_kronor, omx_stangning))
-                            conn.commit()
-                            conn.close()
-                            st.success(f"Loggat! Portfölj: {portfolj_kronor:,.0f} kr, OMXSPI: {omx_stangning:.2f}")
+                            if spara_historik_gspread(datum_str, portfolj_kronor, omx_stangning):
+                                st.success(f"Sparat i Google Sheets! Portfölj: {portfolj_kronor:,.0f} kr, OMXSPI: {omx_stangning:.2f}")
+                                st.rerun()
                         else:
                             st.error("Kunde inte hitta indexkurs för detta specifika datum (kanske helgdag?). Prova en närliggande vardag.")
                     except Exception as e:
-                        st.error(f"Ett fel uppstod vid hämtning av data: {e}")
+                        st.error(f"Ett fel uppstod: {e}")
 
-    # Visa grafen om det finns data
-    conn = sqlite3.connect(DB_NAMN)
-    hist_df = pd.read_sql_query("SELECT * FROM portfolj_historik ORDER BY datum ASC", conn)
-    conn.close()
+    # Hämta live från Google Sheets
+    with st.spinner("Hämtar din historik från Google Sheets..."):
+        hist_df = ladda_historik_gspread()
     
     if len(hist_df) >= 1:
         st.subheader("📈 Utveckling jämfört med OMX Stockholm PI")
         
-        # Om vi har minst 2 datapunkter kan vi indexera till 100% för rättvis jämförelse
         if len(hist_df) >= 2:
             hist_df['Portfölj (%)'] = (hist_df['portfolj_varde'] / hist_df['portfolj_varde'].iloc[0]) * 100 - 100
             hist_df['OMX Stockholm PI (%)'] = (hist_df['omx_index'] / hist_df['omx_index'].iloc[0]) * 100 - 100
@@ -138,31 +162,21 @@ if meny_val == "📊 Översikt & Historik":
             graf_df = hist_df.set_index('datum')[['Portfölj (%)', 'OMX Stockholm PI (%)']]
             st.line_chart(graf_df)
         else:
-            st.info("Logga minst två datapunkter över tid för att rita jämförelsegrafen i procent. Just nu visas rådatan nedan.")
+            st.info("Logga minst två datapunkter över tid för att rita jämförelsegrafen i procent. Just nu visas din första punkt i tabellen nedan.")
             
-        st.subheader("Historiktabell")
+        st.subheader("Historiktabell (Hämtad direkt från ditt kalkylark)")
         st.dataframe(hist_df.rename(columns={'datum':'Datum', 'portfolj_varde':'Portföljvärde (SEK)', 'omx_index':'OMXSPI Index'}), use_container_width=True)
-        
-        if st.button("Radera all historik och rensa databasen"):
-            conn = sqlite3.connect(DB_NAMN)
-            c = conn.cursor()
-            c.execute("DELETE FROM portfolj_historik")
-            conn.commit()
-            conn.close()
-            st.rerun()
     else:
-        st.warning("Databasen är tom. Öppna fliken ovan för att lägga till ditt första portföljvärde!")
+        st.warning("Ditt Google Kalkylark är tomt. Öppna fliken ovan för att logga ditt allra första värde!")
 
 # ---------------------------------------------------------
-# TRENDING VALUE
+# STRATEGIERNA (Samma stabila logik som innan)
 # ---------------------------------------------------------
 elif meny_val == "📈 Strategi: Trending Value":
     st.title("Trending Value 📈")
-    
     if uppladdad_fil is not None:
         with st.spinner('Räknar ut Trending Value...'):
             df, kol_namn, kol_ticker, kol_kurs = ladda_och_tvatta_basdata(uppladdad_fil)
-            
             KOL_PE, KOL_PS, KOL_PB, KOL_PFCF, KOL_EVEBITDA, KOL_UTDELNING = 'P/E - Senaste', 'P/S - Senaste', 'P/B - Senaste', 'P/FCF - Senaste', 'EV/EBITDA - Senaste', 'Direktav. - Senaste'
             varderings_kolumner = [KOL_PE, KOL_PS, KOL_PB, KOL_PFCF, KOL_EVEBITDA]
             
@@ -210,25 +224,17 @@ elif meny_val == "📈 Strategi: Trending Value":
             
             with st.expander("Visa Topp 40 Värdebolag"):
                 st.dataframe(topp_40_sorterad[vy_kolumner].reset_index(drop=True), use_container_width=True)
-            with st.expander("Visa Hela Rådatan (Sorterad på prisvärdhet)"):
-                st.dataframe(df.sort_values(by='Total_Rank')[vy_kolumner + rank_kolumner].reset_index(drop=True), use_container_width=True)
     else:
         st.warning("👈 Vänligen ladda upp din Excel-fil från Börsdata i sidomenyn.")
 
-# ---------------------------------------------------------
-# TRENDANDE UTDELNING
-# ---------------------------------------------------------
 elif meny_val == "💸 Strategi: Trend. Utdelning":
     st.title("Trendande Utdelning 💸")
-    
     if uppladdad_fil is not None:
-        with st.spinner('Sållar fram högsta direktavkastningen och rankar efter momentum...'):
+        with st.spinner('Sållar fram direktavkastning...'):
             df, kol_namn, kol_ticker, kol_kurs = ladda_och_tvatta_basdata(uppladdad_fil)
             KOL_UTDELNING = 'Direktav. - Senaste'
-            
             if KOL_UTDELNING in df.columns:
                 df[KOL_UTDELNING] = pd.to_numeric(df[KOL_UTDELNING], errors='coerce').fillna(0)
-                
                 kol_3m = next((c for c in df.columns if '3m' in c.lower()), None)
                 kol_6m = next((c for c in df.columns if '6m' in c.lower()), None)
                 kol_12m = next((c for c in df.columns if '1år' in c.lower() or '12m' in c.lower()), None)
@@ -237,32 +243,20 @@ elif meny_val == "💸 Strategi: Trend. Utdelning":
                     if kol: df[kol] = pd.to_numeric(df[kol], errors='coerce').fillna(0)
 
                 df['Sammansatt_Momentum'] = (df[kol_3m] + df[kol_6m] + df[kol_12m]) / 3
-                
-                # Topp 40 med högst utdelning, sorterat på momentum
                 topp_40_utd = df.nlargest(40, KOL_UTDELNING).copy()
                 topp_40_utd_sorterad = topp_40_utd.sort_values(by='Sammansatt_Momentum', ascending=False)
                 
                 vy_kolumner = [kol_namn, kol_ticker, kol_kurs, KOL_UTDELNING, 'Sammansatt_Momentum']
-                st.subheader("🚀 Topp 5-10 Köpkandidater (Trendande Utdelning)")
+                st.subheader("🚀 Topp 10 Köpkandidater (Trendande Utdelning)")
                 st.dataframe(topp_40_utd_sorterad[vy_kolumner].head(10).reset_index(drop=True), use_container_width=True)
-                
-                with st.expander("Visa hela Rådatan"):
-                    st.dataframe(df.sort_values(by=KOL_UTDELNING, ascending=False)[vy_kolumner], use_container_width=True)
-            else:
-                st.error(f"Kunde inte hitta kolumnen '{KOL_UTDELNING}' i filen.")
     else:
         st.warning("👈 Ladda upp filen i sidomenyn.")
 
-# ---------------------------------------------------------
-# SAMMANSATT MOMENTUM
-# ---------------------------------------------------------
 elif meny_val == "⚡ Strategi: Momentum":
     st.title("Sammansatt Momentum ⚡")
-    
     if uppladdad_fil is not None:
-        with st.spinner('Rankar marknaden efter rent momentum...'):
+        with st.spinner('Rankar efter rent momentum...'):
             df, kol_namn, kol_ticker, kol_kurs = ladda_och_tvatta_basdata(uppladdad_fil)
-            
             kol_3m = next((c for c in df.columns if '3m' in c.lower()), None)
             kol_6m = next((c for c in df.columns if '6m' in c.lower()), None)
             kol_12m = next((c for c in df.columns if '1år' in c.lower() or '12m' in c.lower()), None)
@@ -275,51 +269,34 @@ elif meny_val == "⚡ Strategi: Momentum":
                 df_sorterad = df.sort_values(by='Sammansatt_Momentum', ascending=False)
                 
                 vy_kolumner = [kol_namn, kol_ticker, kol_kurs, 'Sammansatt_Momentum']
-                st.subheader("🚀 Topp 5-10 Köpkandidater (Sammansatt Momentum)")
+                st.subheader("🚀 Topp 10 Köpkandidater (Sammansatt Momentum)")
                 st.dataframe(df_sorterad[vy_kolumner].head(10).reset_index(drop=True), use_container_width=True)
-            else:
-                st.error("Filen saknar nödvändiga kolumner för 3m, 6m eller 1år momentum.")
     else:
         st.warning("👈 Ladda upp filen i sidomenyn.")
 
 # ---------------------------------------------------------
-# INTERAKTIV OMBALANSERING (Helt utan Excel-krav!)
+# OMBALANSERING
 # ---------------------------------------------------------
 elif meny_val == "⚖️ Ombalansering":
     st.title("Portföljombalansering ⚖️")
-    st.write("Skriv in dina siffror direkt på skärmen för att beräkna exakt köp och sälj till lika viktning.")
-    
     kassa = st.number_input("Nysparande / Ledig Kassa att tillföra (SEK)", min_value=0.0, value=10000.0, step=1000.0)
     
     col1, col2 = st.columns(2)
-    
     with col1:
         st.subheader("1. Din Befintliga Portfölj")
-        st.markdown("*Skriv in aktierna du äger IDAG. Lägg till rader längst ned.*")
-        data_bef = pd.DataFrame([
-            {"Bolagsnamn": "Exempelbolag A", "Ticker": "EXA", "Antal": 100, "Kurs": 50.0}
-        ])
+        data_bef = pd.DataFrame([{"Bolagsnamn": "Exempelbolag A", "Ticker": "EXA", "Antal": 100, "Kurs": 50.0}])
         redigerad_bef = st.data_editor(data_bef, num_rows="dynamic", use_container_width=True)
-        
     with col2:
         st.subheader("2. Dina Nya Målaktier (Topp 10)")
-        st.markdown("*Skriv in aktierna du vill äga FRAMÖVER samt deras kurs.*")
-        data_mal = pd.DataFrame([
-            {"Bolagsnamn": "Exempelbolag A", "Ticker": "EXA", "Kurs": 50.0},
-            {"Bolagsnamn": "Nytt Toppbolag B", "Ticker": "TOB", "Kurs": 120.0}
-        ])
+        data_mal = pd.DataFrame([{"Bolagsnamn": "Exempelbolag A", "Ticker": "EXA", "Kurs": 50.0}, {"Bolagsnamn": "Nytt Toppbolag B", "Ticker": "TOB", "Kurs": 120.0}])
         redigerad_mal = st.data_editor(data_mal, num_rows="dynamic", use_container_width=True)
         
     if st.button("⚡ Beräkna ombalansering"):
-        st.markdown("---")
-        # Städa inmatning
         df_bef = pd.DataFrame(redigerad_bef).dropna(subset=['Ticker'])
         df_mal = pd.DataFrame(redigerad_mal).dropna(subset=['Ticker'])
-        
         df_bef['Ticker'] = df_bef['Ticker'].astype(str).str.upper().str.strip()
         df_mal['Ticker'] = df_mal['Ticker'].astype(str).str.upper().str.strip()
         
-        # Räkna ut portföljvärde
         if not df_bef.empty:
             df_bef['Värde'] = pd.to_numeric(df_bef['Antal']) * pd.to_numeric(df_bef['Kurs'])
             aktie_varde = df_bef['Värde'].sum()
@@ -329,27 +306,19 @@ elif meny_val == "⚖️ Ombalansering":
         totalt_varde = aktie_varde + kassa
         antal_mal = len(df_mal)
         
-        if antal_mal == 0:
-            st.error("Du måste lägga till minst en målaktie i tabell 2.")
-        else:
+        if antal_mal > 0:
             mal_varde_per_aktie = totalt_varde / antal_mal
-            
             st.metric("Totalt Portföljvärde (inkl. kassa)", f"{totalt_varde:,.0f} kr")
             st.metric("Målvärde per aktie (Lika vikt)", f"{mal_varde_per_aktie:,.0f} kr")
             
             ordrar = []
-            
-            # SÄLJ ALLT
             for _, r in df_bef.iterrows():
                 if r['Ticker'] not in df_mal['Ticker'].values:
                     ordrar.append({"Bolagsnamn": r['Bolagsnamn'], "Ticker": r['Ticker'], "Handling": "🔴 SÄLJ ALLT", "Antal aktier": int(r['Antal']), "Kurs": r['Kurs']})
-                    
-            # KÖP / JUSTERA
             for _, r in df_mal.iterrows():
                 ticker = r['Ticker']
                 kurs = float(r['Kurs'])
                 namn = r['Bolagsnamn']
-                
                 mal_antal = int(mal_varde_per_aktie // kurs)
                 match = df_bef[df_bef['Ticker'] == ticker]
                 
@@ -366,5 +335,3 @@ elif meny_val == "⚖️ Ombalansering":
             st.subheader("🛒 Köp- och säljinstruktioner:")
             if ordrar:
                 st.dataframe(pd.DataFrame(ordrar), use_container_width=True)
-            else:
-                st.success("Portföljen är redan perfekt balanserad!")
