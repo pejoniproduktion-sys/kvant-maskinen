@@ -3,3 +3,5 @@ pandas
 numpy
 openpyxl
 yfinance
+gspread
+google-auth
