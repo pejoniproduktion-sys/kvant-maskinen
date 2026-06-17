@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE CONNECTIONS
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v2.0", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v2.1", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -63,7 +63,7 @@ def spara_historik_gspread(datum_str, portfolj_kronor, omx_stangning):
         st.error(f"Fel vid kommunikation med Google Sheets: {e}")
         return False
 
-# --- Funktioner för portföljinnehav (Nu uppdelat per strategi!) ---
+# --- Funktioner för portföljinnehav ---
 def ladda_innehav_gspread(strategi="Value"):
     fliknamn = f"Innehav_{strategi}"
     try:
@@ -105,13 +105,12 @@ def spara_innehav_gspread(df_ny, strategi="Value"):
             worksheet.append_rows(rader)
         return True
     except Exception as e:
-        st.error(f"Kunde inte spara {strategi}-portföljen till Google Sheets: {e}")
+        st.error(f"Kunde inte spara {strategi}-portföljen: {e}")
         return False
 
 # ==========================================
 # 2. APPENS KORTTIDS-MINNE (SESSION STATE)
 # ==========================================
-# Ladda in alla tre portföljer från start
 strategier = ["Value", "Utdelning", "Momentum"]
 
 for s in strategier:
@@ -230,16 +229,21 @@ if meny_val == "📊 Översikt & Historik":
         st.dataframe(hist_df.rename(columns={'datum':'Datum', 'portfolj_varde':'Portföljvärde (SEK)', 'omx_index':'OMXSPI Index'}), use_container_width=True)
 
 elif meny_val == "💼 Min Portfölj":
-nyckel = f"edit_min_portfolj_{vald_portfolj}"
-    redigerad_bef = st.data_editor(st.session_state[f'bef_portfolj_{vald_portfolj}'], num_rows="dynamic", use_container_width=True, key=nyckel)
+    st.title("💼 Mina Befintliga Portföljer")
+    st.write("Välj vilken portfölj du vill visa eller redigera nedan. Appen minns dina ändringar.")
     
-    # --- Lås fast formatet för att förhindra raderings-buggen ---
-    redigerad_bef['Bolagsnamn'] = redigerad_bef['Bolagsnamn'].astype(str)
-    redigerad_bef['Ticker'] = redigerad_bef['Ticker'].astype(str)
-    redigerad_bef['Antal'] = pd.to_numeric(redigerad_bef['Antal'], errors='coerce').fillna(0).astype(int)
-    redigerad_bef['Kurs'] = pd.to_numeric(redigerad_bef['Kurs'], errors='coerce').fillna(0.0).astype(float)
-    # -------------------------------------------------------------
+    vald_portfolj = st.selectbox("Välj portfölj:", strategier, index=strategier.index(st.session_state['aktiv_strategi']))
+    st.session_state['aktiv_strategi'] = vald_portfolj 
     
+    # --- ANTI-STUDS LÅSNING ---
+    temp_df = st.session_state[f'bef_portfolj_{vald_portfolj}'].copy()
+    if 'Bolagsnamn' in temp_df.columns: temp_df['Bolagsnamn'] = temp_df['Bolagsnamn'].astype(str)
+    if 'Ticker' in temp_df.columns: temp_df['Ticker'] = temp_df['Ticker'].astype(str)
+    if 'Antal' in temp_df.columns: temp_df['Antal'] = pd.to_numeric(temp_df['Antal'], errors='coerce').fillna(0).astype(int)
+    if 'Kurs' in temp_df.columns: temp_df['Kurs'] = pd.to_numeric(temp_df['Kurs'], errors='coerce').fillna(0.0).astype(float)
+    
+    nyckel = f"edit_min_portfolj_{vald_portfolj}"
+    redigerad_bef = st.data_editor(temp_df, num_rows="dynamic", use_container_width=True, key=nyckel)
     st.session_state[f'bef_portfolj_{vald_portfolj}'] = redigerad_bef
     
     c1, c2 = st.columns(2)
@@ -309,7 +313,7 @@ elif meny_val == "📈 Strategi: Trending Value":
                 mal.columns = ["Bolagsnamn", "Ticker", "Kurs"]
                 st.session_state['mal_portfolj'] = mal.reset_index(drop=True)
                 st.session_state['ombalansering_beraknad'] = False
-                st.session_state['aktiv_strategi'] = "Value" # Låser ombalanseringen till Value
+                st.session_state['aktiv_strategi'] = "Value" 
                 st.success("✅ Målaktierna sparade! Gå till fliken Ombalansering.")
     else:
         st.warning("👈 Ladda upp fil i menyn.")
@@ -337,7 +341,7 @@ elif meny_val == "💸 Strategi: Trend. Utdelning":
                     mal.columns = ["Bolagsnamn", "Ticker", "Kurs"]
                     st.session_state['mal_portfolj'] = mal.reset_index(drop=True)
                     st.session_state['ombalansering_beraknad'] = False
-                    st.session_state['aktiv_strategi'] = "Utdelning" # Låser till Utdelning
+                    st.session_state['aktiv_strategi'] = "Utdelning" 
                     st.success("✅ Målaktierna sparade!")
     else:
         st.warning("👈 Ladda upp fil i menyn.")
@@ -361,13 +365,13 @@ elif meny_val == "⚡ Strategi: Momentum":
                     mal.columns = ["Bolagsnamn", "Ticker", "Kurs"]
                     st.session_state['mal_portfolj'] = mal.reset_index(drop=True)
                     st.session_state['ombalansering_beraknad'] = False
-                    st.session_state['aktiv_strategi'] = "Momentum" # Låser till Momentum
+                    st.session_state['aktiv_strategi'] = "Momentum" 
                     st.success("✅ Målaktierna sparade!")
     else:
         st.warning("👈 Ladda upp fil i menyn.")
 
 # ==========================================
-# 5. OMBALANSERING (Nu smart för 3 strategier!)
+# 5. OMBALANSERING 
 # ==========================================
 elif meny_val == "⚖️ Ombalansering":
     st.title("Portföljombalansering ⚖️")
@@ -380,19 +384,18 @@ elif meny_val == "⚖️ Ombalansering":
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("1. Befintlig Portfölj")
-        # Hämtar rätt portfölj baserat på vilken strategi du skickade in
         st.dataframe(st.session_state[f'bef_portfolj_{aktiv_strat}'], use_container_width=True)
         
     with col2:
         st.subheader("2. Nya Målaktier (Topp 10)")
-        redigerad_mal = st.data_editor(st.session_state['mal_portfolj'], num_rows="dynamic", use_container_width=True, key="edit_mal")
         
-        # --- Lås fast formatet här också ---
-        redigerad_mal['Bolagsnamn'] = redigerad_mal['Bolagsnamn'].astype(str)
-        redigerad_mal['Ticker'] = redigerad_mal['Ticker'].astype(str)
-        redigerad_mal['Kurs'] = pd.to_numeric(redigerad_mal['Kurs'], errors='coerce').fillna(0.0).astype(float)
-        # -----------------------------------
+        # --- ANTI-STUDS LÅSNING FÖR MÅLAKTIERNA ---
+        temp_mal = st.session_state['mal_portfolj'].copy()
+        if 'Bolagsnamn' in temp_mal.columns: temp_mal['Bolagsnamn'] = temp_mal['Bolagsnamn'].astype(str)
+        if 'Ticker' in temp_mal.columns: temp_mal['Ticker'] = temp_mal['Ticker'].astype(str)
+        if 'Kurs' in temp_mal.columns: temp_mal['Kurs'] = pd.to_numeric(temp_mal['Kurs'], errors='coerce').fillna(0.0).astype(float)
         
+        redigerad_mal = st.data_editor(temp_mal, num_rows="dynamic", use_container_width=True, key="edit_mal")
         st.session_state['mal_portfolj'] = redigerad_mal
         
     if st.button("⚡ Beräkna ombalansering", type="primary"):
@@ -464,7 +467,6 @@ elif meny_val == "⚖️ Ombalansering":
             
             if st.button(f"💾 Verkställ affärer & spara som mitt nya {aktiv_strat}-innehav", type="secondary"):
                 with st.spinner("Sparar din nya portfölj till Google Sheets..."):
-                    # Sparar nu specifikt i rätt flik för vald strategi
                     if spara_innehav_gspread(st.session_state['ny_portfolj_df'], aktiv_strat):
                         st.session_state[f'bef_portfolj_{aktiv_strat}'] = st.session_state['ny_portfolj_df']
                         st.session_state['ombalansering_beraknad'] = False 
