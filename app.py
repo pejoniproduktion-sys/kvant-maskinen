@@ -8,9 +8,15 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # ==========================================
-# 1. APPENS INSTÄLLNINGAR & GOOGLE SHEETS
+# 1. APPENS INSTÄLLNINGAR & MINNE (SESSION STATE)
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v1.1", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v1.2", page_icon="🚀", layout="wide")
+
+# Skapa appens korttidsminne så data överlever flikbyten
+if 'bef_portfolj' not in st.session_state:
+    st.session_state['bef_portfolj'] = pd.DataFrame([{"Bolagsnamn": "", "Ticker": "", "Antal": 0, "Kurs": 0.0}])
+if 'mal_portfolj' not in st.session_state:
+    st.session_state['mal_portfolj'] = pd.DataFrame(columns=["Bolagsnamn", "Ticker", "Kurs"])
 
 def get_gspread_client():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -49,7 +55,7 @@ def spara_historik_gspread(datum_str, portfolj_kronor, omx_stangning):
         found_row = None
         for i, row in enumerate(rows):
             if row and row[0] == datum_str:
-                found_row = i + 2  # +1 för header, +1 för 1-baserat index
+                found_row = i + 2
                 break
                 
         if found_row:
@@ -72,6 +78,7 @@ meny_val = st.sidebar.radio(
     "Välj vy:",
     [
         "📊 Översikt & Historik", 
+        "💼 Min Portfölj",
         "📈 Strategi: Trending Value", 
         "💸 Strategi: Trend. Utdelning", 
         "⚡ Strategi: Momentum", 
@@ -80,7 +87,7 @@ meny_val = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.info("Ladda upp din senaste Excel- eller CSV-export från Börsdata nedan för att köra strategierna.")
+st.sidebar.info("Ladda upp din Excel-export från Börsdata nedan.")
 uppladdad_fil = st.sidebar.file_uploader("Ladda upp Börsdata-fil", type=["xlsx", "csv"])
 
 def ladda_och_tvatta_basdata(fil):
@@ -121,7 +128,7 @@ def ladda_och_tvatta_basdata(fil):
 # ==========================================
 
 if meny_val == "📊 Översikt & Historik":
-    st.title("📊 Portföljöversikt & Evig Historik (Google Sheets)")
+    st.title("📊 Portföljöversikt & Evig Historik")
     
     with st.expander("➕ Logga ett nytt portföljvärde"):
         with st.form("logga_varde"):
@@ -144,33 +151,59 @@ if meny_val == "📊 Översikt & Historik":
                                 st.success(f"Sparat i Google Sheets! Portfölj: {portfolj_kronor:,.0f} kr, OMXSPI: {omx_stangning:.2f}")
                                 st.rerun()
                         else:
-                            st.error("Kunde inte hitta indexkurs för detta specifika datum (kanske helgdag?). Prova en närliggande vardag.")
+                            st.error("Kunde inte hitta indexkurs.")
                     except Exception as e:
                         st.error(f"Ett fel uppstod: {e}")
 
-    # Hämta live från Google Sheets
     with st.spinner("Hämtar din historik från Google Sheets..."):
         hist_df = ladda_historik_gspread()
     
     if len(hist_df) >= 1:
         st.subheader("📈 Utveckling jämfört med OMX Stockholm PI")
-        
         if len(hist_df) >= 2:
             hist_df['Portfölj (%)'] = (hist_df['portfolj_varde'] / hist_df['portfolj_varde'].iloc[0]) * 100 - 100
             hist_df['OMX Stockholm PI (%)'] = (hist_df['omx_index'] / hist_df['omx_index'].iloc[0]) * 100 - 100
-            
             graf_df = hist_df.set_index('datum')[['Portfölj (%)', 'OMX Stockholm PI (%)']]
             st.line_chart(graf_df)
-        else:
-            st.info("Logga minst två datapunkter över tid för att rita jämförelsegrafen i procent. Just nu visas din första punkt i tabellen nedan.")
-            
-        st.subheader("Historiktabell (Hämtad direkt från ditt kalkylark)")
         st.dataframe(hist_df.rename(columns={'datum':'Datum', 'portfolj_varde':'Portföljvärde (SEK)', 'omx_index':'OMXSPI Index'}), use_container_width=True)
-    else:
-        st.warning("Ditt Google Kalkylark är tomt. Öppna fliken ovan för att logga ditt allra första värde!")
 
 # ---------------------------------------------------------
-# STRATEGIERNA (Samma stabila logik som innan)
+# NY FLIK: MIN PORTFÖLJ
+# ---------------------------------------------------------
+elif meny_val == "💼 Min Portfölj":
+    st.title("💼 Min Befintliga Portfölj")
+    st.write("Skriv in dina aktier här. Appen minns dem när du hoppar mellan flikarna!")
+    
+    # Låt användaren redigera portföljen (sparas direkt i minnet)
+    redigerad_bef = st.data_editor(st.session_state['bef_portfolj'], num_rows="dynamic", use_container_width=True, key="edit_min_portfolj")
+    st.session_state['bef_portfolj'] = redigerad_bef
+    
+    if uppladdad_fil is not None:
+        if st.button("🔄 Hämta dagsaktuella kurser från Börsdata"):
+            df_bd, kol_namn_bd, kol_tick_bd, kol_kurs_bd = ladda_och_tvatta_basdata(uppladdad_fil)
+            # Skapa ett lexikon för snabb sökning av kurser
+            kurs_dict = dict(zip(df_bd[kol_tick_bd].astype(str).str.upper().str.strip(), df_bd[kol_kurs_bd]))
+            namn_dict = dict(zip(df_bd[kol_tick_bd].astype(str).str.upper().str.strip(), df_bd[kol_namn_bd]))
+            
+            temp_bef = st.session_state['bef_portfolj'].copy()
+            uppdaterade = 0
+            for idx, row in temp_bef.iterrows():
+                ticker = str(row['Ticker']).upper().strip()
+                if ticker in kurs_dict:
+                    temp_bef.at[idx, 'Kurs'] = float(kurs_dict[ticker])
+                    # Kan även fylla i bolagsnamnet automatiskt om det saknas
+                    if pd.isna(row['Bolagsnamn']) or row['Bolagsnamn'] == "":
+                        temp_bef.at[idx, 'Bolagsnamn'] = namn_dict[ticker]
+                    uppdaterade += 1
+            
+            st.session_state['bef_portfolj'] = temp_bef
+            st.success(f"✅ Kurser för {uppdaterade} aktier uppdaterades!")
+            st.rerun()
+    else:
+        st.info("👈 Ladda upp en Börsdata-fil i menyn om du vill kunna hämta aktuella priser automatiskt.")
+
+# ---------------------------------------------------------
+# STRATEGIERNA (Nu med "Skicka"-knappar!)
 # ---------------------------------------------------------
 elif meny_val == "📈 Strategi: Trending Value":
     st.title("Trending Value 📈")
@@ -182,14 +215,12 @@ elif meny_val == "📈 Strategi: Trending Value":
             
             for kol in varderings_kolumner:
                 if kol in df.columns:
-                    df[kol] = pd.to_numeric(df[kol], errors='coerce')
-                    df.loc[df[kol] < 0, kol] = 5000
-                    df[kol] = df[kol].fillna(5000)
+                    df[kol] = pd.to_numeric(df[kol], errors='coerce').fillna(5000)
 
             if KOL_UTDELNING in df.columns:
                 df[KOL_UTDELNING] = pd.to_numeric(df[KOL_UTDELNING], errors='coerce').fillna(0)
 
-            antal_kvarvarande_bolag = len(df)
+            antal_bolag = len(df)
             rank_kolumner = []
             for kol in varderings_kolumner:
                 if kol in df.columns:
@@ -198,11 +229,10 @@ elif meny_val == "📈 Strategi: Trending Value":
                     rank_kolumner.append(rank_namn)
 
             if KOL_UTDELNING in df.columns:
-                rank_utdelning = f'Rank_{KOL_UTDELNING}'
                 har_utdelning = df[KOL_UTDELNING] > 0
-                df.loc[har_utdelning, rank_utdelning] = df.loc[har_utdelning, KOL_UTDELNING].rank(ascending=False, method='min')
-                df.loc[~har_utdelning, rank_utdelning] = antal_kvarvarande_bolag
-                rank_kolumner.append(rank_utdelning)
+                df.loc[har_utdelning, f'Rank_{KOL_UTDELNING}'] = df.loc[har_utdelning, KOL_UTDELNING].rank(ascending=False, method='min')
+                df.loc[~har_utdelning, f'Rank_{KOL_UTDELNING}'] = antal_bolag
+                rank_kolumner.append(f'Rank_{KOL_UTDELNING}')
 
             df['Total_Rank'] = df[rank_kolumner].sum(axis=1) / len(rank_kolumner)
 
@@ -214,18 +244,20 @@ elif meny_val == "📈 Strategi: Trending Value":
                 if kol: df[kol] = pd.to_numeric(df[kol], errors='coerce').fillna(0)
 
             df['Sammansatt_Momentum'] = (df[kol_3m] + df[kol_6m] + df[kol_12m]) / 3
-
-            topp_40 = df.nsmallest(40, 'Total_Rank').copy()
-            topp_40_sorterad = topp_40.sort_values(by='Sammansatt_Momentum', ascending=False)
-
+            topp_40 = df.nsmallest(40, 'Total_Rank').sort_values(by='Sammansatt_Momentum', ascending=False)
             vy_kolumner = [kol_namn, kol_ticker, kol_kurs, 'Sammansatt_Momentum', 'Total_Rank']
-            st.subheader("🚀 Topp 10 Köpkandidater")
-            st.dataframe(topp_40_sorterad[vy_kolumner].head(10).reset_index(drop=True), use_container_width=True)
             
-            with st.expander("Visa Topp 40 Värdebolag"):
-                st.dataframe(topp_40_sorterad[vy_kolumner].reset_index(drop=True), use_container_width=True)
+            st.subheader("🚀 Topp 10 Köpkandidater")
+            st.dataframe(topp_40[vy_kolumner].head(10).reset_index(drop=True), use_container_width=True)
+            
+            # MAGISK KNAPP FÖR ATT SKICKA TILL OMBALANSERING
+            if st.button("⚡ Skicka Topp 10 till Ombalansering", key="btn_val"):
+                mal = topp_40[[kol_namn, kol_ticker, kol_kurs]].head(10).copy()
+                mal.columns = ["Bolagsnamn", "Ticker", "Kurs"]
+                st.session_state['mal_portfolj'] = mal.reset_index(drop=True)
+                st.success("✅ Målaktierna är sparade i minnet! Klicka på fliken Ombalansering i menyn.")
     else:
-        st.warning("👈 Vänligen ladda upp din Excel-fil från Börsdata i sidomenyn.")
+        st.warning("👈 Ladda upp fil i menyn.")
 
 elif meny_val == "💸 Strategi: Trend. Utdelning":
     st.title("Trendande Utdelning 💸")
@@ -243,14 +275,20 @@ elif meny_val == "💸 Strategi: Trend. Utdelning":
                     if kol: df[kol] = pd.to_numeric(df[kol], errors='coerce').fillna(0)
 
                 df['Sammansatt_Momentum'] = (df[kol_3m] + df[kol_6m] + df[kol_12m]) / 3
-                topp_40_utd = df.nlargest(40, KOL_UTDELNING).copy()
-                topp_40_utd_sorterad = topp_40_utd.sort_values(by='Sammansatt_Momentum', ascending=False)
-                
+                topp_40 = df.nlargest(40, KOL_UTDELNING).sort_values(by='Sammansatt_Momentum', ascending=False)
                 vy_kolumner = [kol_namn, kol_ticker, kol_kurs, KOL_UTDELNING, 'Sammansatt_Momentum']
-                st.subheader("🚀 Topp 10 Köpkandidater (Trendande Utdelning)")
-                st.dataframe(topp_40_utd_sorterad[vy_kolumner].head(10).reset_index(drop=True), use_container_width=True)
+                
+                st.subheader("🚀 Topp 10 Köpkandidater")
+                st.dataframe(topp_40[vy_kolumner].head(10).reset_index(drop=True), use_container_width=True)
+                
+                # MAGISK KNAPP 
+                if st.button("⚡ Skicka Topp 10 till Ombalansering", key="btn_utd"):
+                    mal = topp_40[[kol_namn, kol_ticker, kol_kurs]].head(10).copy()
+                    mal.columns = ["Bolagsnamn", "Ticker", "Kurs"]
+                    st.session_state['mal_portfolj'] = mal.reset_index(drop=True)
+                    st.success("✅ Målaktierna är sparade i minnet! Klicka på fliken Ombalansering.")
     else:
-        st.warning("👈 Ladda upp filen i sidomenyn.")
+        st.warning("👈 Ladda upp fil i menyn.")
 
 elif meny_val == "⚡ Strategi: Momentum":
     st.title("Sammansatt Momentum ⚡")
@@ -267,33 +305,45 @@ elif meny_val == "⚡ Strategi: Momentum":
 
                 df['Sammansatt_Momentum'] = (df[kol_3m] + df[kol_6m] + df[kol_12m]) / 3
                 df_sorterad = df.sort_values(by='Sammansatt_Momentum', ascending=False)
-                
                 vy_kolumner = [kol_namn, kol_ticker, kol_kurs, 'Sammansatt_Momentum']
-                st.subheader("🚀 Topp 10 Köpkandidater (Sammansatt Momentum)")
+                
+                st.subheader("🚀 Topp 10 Köpkandidater")
                 st.dataframe(df_sorterad[vy_kolumner].head(10).reset_index(drop=True), use_container_width=True)
+                
+                # MAGISK KNAPP
+                if st.button("⚡ Skicka Topp 10 till Ombalansering", key="btn_mom"):
+                    mal = df_sorterad[[kol_namn, kol_ticker, kol_kurs]].head(10).copy()
+                    mal.columns = ["Bolagsnamn", "Ticker", "Kurs"]
+                    st.session_state['mal_portfolj'] = mal.reset_index(drop=True)
+                    st.success("✅ Målaktierna är sparade i minnet! Klicka på fliken Ombalansering.")
     else:
-        st.warning("👈 Ladda upp filen i sidomenyn.")
+        st.warning("👈 Ladda upp fil i menyn.")
 
 # ---------------------------------------------------------
-# OMBALANSERING
+# OMBALANSERING (Nu helt automatisk!)
 # ---------------------------------------------------------
 elif meny_val == "⚖️ Ombalansering":
     st.title("Portföljombalansering ⚖️")
+    st.write("*(Dina aktier laddas nu in helt automatiskt från minnet)*")
+    
     kassa = st.number_input("Nysparande / Ledig Kassa att tillföra (SEK)", min_value=0.0, value=10000.0, step=1000.0)
     
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("1. Din Befintliga Portfölj")
-        data_bef = pd.DataFrame([{"Bolagsnamn": "Exempelbolag A", "Ticker": "EXA", "Antal": 100, "Kurs": 50.0}])
-        redigerad_bef = st.data_editor(data_bef, num_rows="dynamic", use_container_width=True)
+        # Hämtar direkt från Min Portfölj
+        st.dataframe(st.session_state['bef_portfolj'], use_container_width=True)
+        
     with col2:
         st.subheader("2. Dina Nya Målaktier (Topp 10)")
-        data_mal = pd.DataFrame([{"Bolagsnamn": "Exempelbolag A", "Ticker": "EXA", "Kurs": 50.0}, {"Bolagsnamn": "Nytt Toppbolag B", "Ticker": "TOB", "Kurs": 120.0}])
-        redigerad_mal = st.data_editor(data_mal, num_rows="dynamic", use_container_width=True)
+        # Hämtar direkt från strategierna men går fortfarande att redigera manuellt om man vill
+        redigerad_mal = st.data_editor(st.session_state['mal_portfolj'], num_rows="dynamic", use_container_width=True, key="edit_mal")
+        st.session_state['mal_portfolj'] = redigerad_mal
         
-    if st.button("⚡ Beräkna ombalansering"):
-        df_bef = pd.DataFrame(redigerad_bef).dropna(subset=['Ticker'])
-        df_mal = pd.DataFrame(redigerad_mal).dropna(subset=['Ticker'])
+    if st.button("⚡ Beräkna ombalansering", type="primary"):
+        df_bef = pd.DataFrame(st.session_state['bef_portfolj']).dropna(subset=['Ticker'])
+        df_mal = pd.DataFrame(st.session_state['mal_portfolj']).dropna(subset=['Ticker'])
+        
         df_bef['Ticker'] = df_bef['Ticker'].astype(str).str.upper().str.strip()
         df_mal['Ticker'] = df_mal['Ticker'].astype(str).str.upper().str.strip()
         
@@ -310,6 +360,7 @@ elif meny_val == "⚖️ Ombalansering":
             mal_varde_per_aktie = totalt_varde / antal_mal
             st.metric("Totalt Portföljvärde (inkl. kassa)", f"{totalt_varde:,.0f} kr")
             st.metric("Målvärde per aktie (Lika vikt)", f"{mal_varde_per_aktie:,.0f} kr")
+            st.markdown("---")
             
             ordrar = []
             for _, r in df_bef.iterrows():
