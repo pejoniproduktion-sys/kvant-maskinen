@@ -230,14 +230,16 @@ if meny_val == "📊 Översikt & Historik":
         st.dataframe(hist_df.rename(columns={'datum':'Datum', 'portfolj_varde':'Portföljvärde (SEK)', 'omx_index':'OMXSPI Index'}), use_container_width=True)
 
 elif meny_val == "💼 Min Portfölj":
-    st.title("💼 Mina Befintliga Portföljer")
-    st.write("Välj vilken portfölj du vill visa eller redigera nedan. Appen minns dina ändringar.")
-    
-    vald_portfolj = st.selectbox("Välj portfölj:", strategier, index=strategier.index(st.session_state['aktiv_strategi']))
-    st.session_state['aktiv_strategi'] = vald_portfolj # Uppdatera aktivt minne
-    
-    nyckel = f"edit_min_portfolj_{vald_portfolj}"
+nyckel = f"edit_min_portfolj_{vald_portfolj}"
     redigerad_bef = st.data_editor(st.session_state[f'bef_portfolj_{vald_portfolj}'], num_rows="dynamic", use_container_width=True, key=nyckel)
+    
+    # --- Lås fast formatet för att förhindra raderings-buggen ---
+    redigerad_bef['Bolagsnamn'] = redigerad_bef['Bolagsnamn'].astype(str)
+    redigerad_bef['Ticker'] = redigerad_bef['Ticker'].astype(str)
+    redigerad_bef['Antal'] = pd.to_numeric(redigerad_bef['Antal'], errors='coerce').fillna(0).astype(int)
+    redigerad_bef['Kurs'] = pd.to_numeric(redigerad_bef['Kurs'], errors='coerce').fillna(0.0).astype(float)
+    # -------------------------------------------------------------
+    
     st.session_state[f'bef_portfolj_{vald_portfolj}'] = redigerad_bef
     
     c1, c2 = st.columns(2)
@@ -384,6 +386,13 @@ elif meny_val == "⚖️ Ombalansering":
     with col2:
         st.subheader("2. Nya Målaktier (Topp 10)")
         redigerad_mal = st.data_editor(st.session_state['mal_portfolj'], num_rows="dynamic", use_container_width=True, key="edit_mal")
+        
+        # --- Lås fast formatet här också ---
+        redigerad_mal['Bolagsnamn'] = redigerad_mal['Bolagsnamn'].astype(str)
+        redigerad_mal['Ticker'] = redigerad_mal['Ticker'].astype(str)
+        redigerad_mal['Kurs'] = pd.to_numeric(redigerad_mal['Kurs'], errors='coerce').fillna(0.0).astype(float)
+        # -----------------------------------
+        
         st.session_state['mal_portfolj'] = redigerad_mal
         
     if st.button("⚡ Beräkna ombalansering", type="primary"):
