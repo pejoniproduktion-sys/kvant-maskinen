@@ -97,34 +97,47 @@ elif "Strategi" in meny_val:
 
 elif meny_val == "⚖️ Ombalansering":
     st.title("⚖️ Ombalansering")
-    strat = st.session_state['aktiv_strategi']
-    kassa = st.number_input("Nysparande (SEK)", 10000)
+    
+    # Här lägger vi till den saknade rullgardinsmenyn!
+    vald_strat = st.selectbox("Välj vilken portfölj som ska ombalanseras:", 
+                              strategier, 
+                              index=strategier.index(st.session_state['aktiv_strategi']))
+    st.session_state['aktiv_strategi'] = vald_strat
+    
+    st.info(f"📍 Aktuell portfölj: **{vald_strat}**")
+    
+    kassa = st.number_input("Nysparande / Ledig Kassa (SEK)", 10000)
     
     c1, c2 = st.columns(2)
-    with c1: st.subheader("Befintlig"); st.dataframe(st.session_state[f'bef_portfolj_{strat}'])
-    with c2: st.subheader("Målaktier"); st.dataframe(st.session_state['mal_portfolj'])
+    with c1: 
+        st.subheader(f"Befintlig ({vald_strat})")
+        st.dataframe(st.session_state[f'bef_portfolj_{vald_strat}'], use_container_width=True)
+    with c2: 
+        st.subheader("Målaktier")
+        st.dataframe(st.session_state['mal_portfolj'], use_container_width=True)
     
     if st.button("Beräkna affärer"):
-        df_bef = st.session_state[f'bef_portfolj_{strat}']
+        df_bef = st.session_state[f'bef_portfolj_{vald_strat}']
         df_mal = st.session_state['mal_portfolj']
         
-        # Beräkningslogik
-        tot_varde = (df_bef['Antal'] * df_bef['Kurs']).sum() + kassa
-        mal_per_aktie = tot_varde / len(df_mal)
+        # Beräkning sker här...
+        tot_varde = (pd.to_numeric(df_bef['Antal'], errors='coerce').fillna(0) * pd.to_numeric(df_bef['Kurs'], errors='coerce').fillna(0)).sum() + kassa
+        mal_per_aktie = tot_varde / len(df_mal) if len(df_mal) > 0 else 0
         
         ordrar = []
         for _, r in df_mal.iterrows():
             kurs = float(r['Kurs'])
-            antal = int(mal_per_aktie // kurs)
+            antal = int(mal_per_aktie // kurs) if kurs > 0 else 0
             ordrar.append({"Ticker": r['Ticker'], "Antal att äga": antal, "Handling": "KÖP"})
         
         st.session_state['ordrar'] = pd.DataFrame(ordrar)
         st.session_state['ny_portfolj'] = st.session_state['mal_portfolj'].copy()
         st.session_state['ny_portfolj']['Antal'] = [int(mal_per_aktie // float(r['Kurs'])) for _, r in df_mal.iterrows()]
+        st.session_state['ombalansering_beraknad'] = True
 
-    if 'ordrar' in st.session_state:
+    if st.session_state.get('ombalansering_beraknad', False):
         st.dataframe(st.session_state['ordrar'])
         if st.button("💾 Verkställ & Spara"):
-            spara_innehav_gspread(st.session_state['ny_portfolj'], strat)
-            st.session_state[f'bef_portfolj_{strat}'] = st.session_state['ny_portfolj']
-            st.success("Portfölj uppdaterad i Google Sheets!")
+            spara_innehav_gspread(st.session_state['ny_portfolj'], vald_strat)
+            st.session_state[f'bef_portfolj_{vald_strat}'] = st.session_state['ny_portfolj']
+            st.success(f"Portfölj {vald_strat} uppdaterad i Google Sheets!")
