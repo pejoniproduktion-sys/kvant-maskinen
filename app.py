@@ -322,6 +322,9 @@ elif meny_val == "⚡ Strategi: Momentum":
 # ---------------------------------------------------------
 # OMBALANSERING (Nu helt automatisk!)
 # ---------------------------------------------------------
+# ---------------------------------------------------------
+# OMBALANSERING (Nu helt automatisk!)
+# ---------------------------------------------------------
 elif meny_val == "⚖️ Ombalansering":
     st.title("Portföljombalansering ⚖️")
     st.write("*(Dina aktier laddas nu in helt automatiskt från minnet)*")
@@ -331,24 +334,39 @@ elif meny_val == "⚖️ Ombalansering":
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("1. Din Befintliga Portfölj")
-        # Hämtar direkt från Min Portfölj
         st.dataframe(st.session_state['bef_portfolj'], use_container_width=True)
         
     with col2:
         st.subheader("2. Dina Nya Målaktier (Topp 10)")
-        # Hämtar direkt från strategierna men går fortfarande att redigera manuellt om man vill
         redigerad_mal = st.data_editor(st.session_state['mal_portfolj'], num_rows="dynamic", use_container_width=True, key="edit_mal")
         st.session_state['mal_portfolj'] = redigerad_mal
         
     if st.button("⚡ Beräkna ombalansering", type="primary"):
-        df_bef = pd.DataFrame(st.session_state['bef_portfolj']).dropna(subset=['Ticker'])
-        df_mal = pd.DataFrame(st.session_state['mal_portfolj']).dropna(subset=['Ticker'])
+        df_bef = pd.DataFrame(st.session_state['bef_portfolj'])
+        df_mal = pd.DataFrame(st.session_state['mal_portfolj'])
         
+        # 1. Städa bort helt tomma rader (där Ticker saknas eller är blank)
+        df_bef = df_bef.dropna(subset=['Ticker'])
+        df_bef = df_bef[df_bef['Ticker'].astype(str).str.strip() != '']
+        
+        df_mal = df_mal.dropna(subset=['Ticker'])
+        df_mal = df_mal[df_mal['Ticker'].astype(str).str.strip() != '']
+        
+        # 2. Snygga till Tickers så de matchar (stora bokstäver, inga mellanslag)
         df_bef['Ticker'] = df_bef['Ticker'].astype(str).str.upper().str.strip()
         df_mal['Ticker'] = df_mal['Ticker'].astype(str).str.upper().str.strip()
         
+        # 3. Tvinga Antal och Kurs att bli riktiga siffror (ersätt tomt strunt med 0)
+        if 'Antal' in df_bef.columns:
+            df_bef['Antal'] = pd.to_numeric(df_bef['Antal'], errors='coerce').fillna(0)
+        if 'Kurs' in df_bef.columns:
+            df_bef['Kurs'] = pd.to_numeric(df_bef['Kurs'], errors='coerce').fillna(0)
+        if 'Kurs' in df_mal.columns:
+            df_mal['Kurs'] = pd.to_numeric(df_mal['Kurs'], errors='coerce').fillna(0)
+        
+        # Beräkna värden
         if not df_bef.empty:
-            df_bef['Värde'] = pd.to_numeric(df_bef['Antal']) * pd.to_numeric(df_bef['Kurs'])
+            df_bef['Värde'] = df_bef['Antal'] * df_bef['Kurs']
             aktie_varde = df_bef['Värde'].sum()
         else:
             aktie_varde = 0
@@ -363,14 +381,19 @@ elif meny_val == "⚖️ Ombalansering":
             st.markdown("---")
             
             ordrar = []
+            # Kolla vilka aktier vi äger som inte är målaktier (Sälj allt)
             for _, r in df_bef.iterrows():
                 if r['Ticker'] not in df_mal['Ticker'].values:
                     ordrar.append({"Bolagsnamn": r['Bolagsnamn'], "Ticker": r['Ticker'], "Handling": "🔴 SÄLJ ALLT", "Antal aktier": int(r['Antal']), "Kurs": r['Kurs']})
+            
+            # Kolla målaktierna och jämför med vad vi har
             for _, r in df_mal.iterrows():
                 ticker = r['Ticker']
                 kurs = float(r['Kurs'])
                 namn = r['Bolagsnamn']
-                mal_antal = int(mal_varde_per_aktie // kurs)
+                # Skydda mot nolldivision om kursen saknas
+                mal_antal = int(mal_varde_per_aktie // kurs) if kurs > 0 else 0 
+                
                 match = df_bef[df_bef['Ticker'] == ticker]
                 
                 if not match.empty:
@@ -386,3 +409,5 @@ elif meny_val == "⚖️ Ombalansering":
             st.subheader("🛒 Köp- och säljinstruktioner:")
             if ordrar:
                 st.dataframe(pd.DataFrame(ordrar), use_container_width=True)
+        else:
+            st.info("Inga målaktier hittades. Ladda in dem från en strategi först!")
