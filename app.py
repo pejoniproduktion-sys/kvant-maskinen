@@ -28,8 +28,12 @@ def ladda_historik_gspread():
         if df.empty:
             return pd.DataFrame(columns=['datum', 'portfolj_varde', 'omx_index'])
         df['datum'] = df['datum'].astype(str)
-        df['portfolj_varde'] = pd.to_numeric(df['portfolj_varde'], errors='coerce').fillna(0)
-        df['omx_index'] = pd.to_numeric(df['omx_index'], errors='coerce').fillna(0)
+        
+        # --- NY STÄDNING FÖR SVENSKA KOMMATECKEN ---
+        df['portfolj_varde'] = pd.to_numeric(df['portfolj_varde'].astype(str).str.replace(' ', '').str.replace(',', '.'), errors='coerce').fillna(0)
+        df['omx_index'] = pd.to_numeric(df['omx_index'].astype(str).str.replace(' ', '').str.replace(',', '.'), errors='coerce').fillna(0)
+        # ------------------------------------------
+        
         return df.sort_values('datum').reset_index(drop=True)
     except:
         return pd.DataFrame(columns=['datum', 'portfolj_varde', 'omx_index'])
@@ -151,8 +155,14 @@ if meny_val == "📊 Översikt & Historik":
                         omx = yf.Ticker("^OMXSPI")
                         hist = omx.history(start=valt_datum, end=valt_datum + timedelta(days=4))
                         if not hist.empty:
-                            omx_stangning = float(hist['Close'].iloc[0])
-                            if spara_historik_gspread(datum_str, portfolj_kronor, omx_stangning):
+                            # Avrunda till max 2 decimaler
+                            omx_stangning = round(float(hist['Close'].iloc[0]), 2)
+                            
+                            # Gör om till svenskt textformat (komma istället för punkt) innan vi sparar
+                            port_str = str(round(portfolj_kronor, 2)).replace('.', ',')
+                            omx_str = str(omx_stangning).replace('.', ',')
+                            
+                            if spara_historik_gspread(datum_str, port_str, omx_str):
                                 st.success("Sparat i Google Sheets!")
                                 st.rerun()
                         else: st.error("Kunde inte hitta indexkurs för detta datum (helgdag?). Prova en närliggande vardag.")
