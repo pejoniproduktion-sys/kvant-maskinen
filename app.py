@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. INSTÄLLNINGAR & GOOGLE CONNECTIONS
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v3.1", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v3.2", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -26,23 +26,48 @@ def ladda_historik_gspread():
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
         if df.empty:
-            return pd.DataFrame(columns=['datum', 'portfolj_varde', 'omx_index'])
+            return pd.DataFrame(columns=['datum', 'varde_value', 'varde_utdelning', 'varde_momentum', 'portfolj_varde', 'omx_index'])
+        
         df['datum'] = df['datum'].astype(str)
-        df['portfolj_varde'] = pd.to_numeric(df['portfolj_varde'].astype(str).str.replace(' ', '').str.replace(',', '.'), errors='coerce').fillna(0)
-        df['omx_index'] = pd.to_numeric(df['omx_index'].astype(str).str.replace(' ', '').str.replace(',', '.'), errors='coerce').fillna(0)
+        
+        # Säkerställ att nya strategikolumner finns i dataramen även för gamla rader
+        for col in ['varde_value', 'varde_utdelning', 'varde_momentum', 'portfolj_varde', 'omx_index']:
+            if col not in df.columns:
+                df[col] = 0
+            else:
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(' ', '').str.replace(',', '.'), errors='coerce').fillna(0)
+                
         return df.sort_values('datum').reset_index(drop=True)
     except:
-        return pd.DataFrame(columns=['datum', 'portfolj_varde', 'omx_index'])
+        return pd.DataFrame(columns=['datum', 'varde_value', 'varde_utdelning', 'varde_momentum', 'portfolj_varde', 'omx_index'])
 
-def spara_historik_gspread(datum_str, portfolj_kronor, omx_stangning):
+def spara_historik_gspread(datum_str, v_val_str, v_utd_str, v_mom_str, tot_str, omx_str):
     try:
         gc = get_gspread_client()
         sh = gc.open_by_url(st.secrets["google_sheet_url"])
         worksheet = sh.worksheet("Historik")
         data = worksheet.get_all_values()
-        if not data:
-            worksheet.append_row(["datum", "portfolj_varde", "omx_index"])
-        worksheet.append_row([datum_str, portfolj_kronor, omx_stangning])
+        
+        if not data or len(data[0]) < 6:
+            worksheet.clear()
+            worksheet.append_row(["datum", "varde_value", "varde_utdelning", "varde_momentum", "portfolj_varde", "omx_index"])
+            data = [["datum", "varde_value", "varde_utdelning", "varde_momentum", "portfolj_varde", "omx_index"]]
+            
+        rows = data[1:]
+        found_row = None
+        for i, row in enumerate(rows):
+            if row and row[0] == datum_str:
+                found_row = i + 2
+                break
+                
+        if found_row:
+            worksheet.update_cell(found_row, 2, v_val_str)
+            worksheet.update_cell(found_row, 3, v_utd_str)
+            worksheet.update_cell(found_row, 4, v_mom_str)
+            worksheet.update_cell(found_row, 5, tot_str)
+            worksheet.update_cell(found_row, 6, omx_str)
+        else:
+            worksheet.append_row([datum_str, v_val_str, v_utd_str, v_mom_str, tot_str, omx_str])
         return True
     except:
         return False
@@ -126,25 +151,40 @@ def ladda_och_tvatta_basdata(fil):
 if meny_val == "📊 Översikt & Historik":
     st.title("📊 Portföljöversikt & Evig Historik")
     
-    with st.expander("➕ Logga ett nytt totalvärde för dina portföljer"):
+    with st.expander("➕ Logga värde per kvantstrategi (Beräknar totalen automatiskt)"):
         with st.form("logga_varde"):
             valt_datum = st.date_input("Välj datum", datetime.now())
-            portfolj_kronor = st.number_input("Totalt värde (Alla portföljer + Kassa) i SEK", min_value=0.0, step=1000.0)
+            
+            # Tre separata rutor för inmatning
+            v_value = st.number_input("Värde: Trending Value-portfölj (SEK)", min_value=0.0, step=1000.0)
+            v_utd = st.number_input("Utdelning: Trendande Utdelning-portfölj (SEK)", min_value=0.0, step=1000.0)
+            v_mom = st.number_input("Momentum: Sammansatt Momentum-portfölj (SEK)", min_value=0.0, step=1000.0)
+            
             if st.form_submit_button("Spara datapunkt"):
                 datum_str = valt_datum.strftime("%Y-%m-%d")
+                totalt_portfoljvarde = v_value + v_utd + v_mom
+                
                 with st.spinner("Hämtar OMXSPI från Yahoo Finance..."):
                     try:
                         omx = yf.Ticker("^OMXSPI")
                         hist = omx.history(start=valt_datum, end=valt_datum + timedelta(days=4))
                         if not hist.empty:
                             omx_stangning = round(float(hist['Close'].iloc[0]), 2)
-                            port_str = str(round(portfolj_kronor, 2)).replace('.', ',')
+                            
+                            # Konvertera till svenska textformat med komma
+                            val_str = str(round(v_value, 2)).replace('.', ',')
+                            utd_str = str(round(v_utd, 2)).replace('.', ',')
+                            mom_str = str(round(v_mom, 2)).replace('.', ',')
+                            tot_str = str(round(totalt_portfoljvarde, 2)).replace('.', ',')
                             omx_str = str(omx_stangning).replace('.', ',')
-                            if spara_historik_gspread(datum_str, port_str, omx_str):
-                                st.success("Sparat i Google Sheets!")
+                            
+                            if spara_historik_gspread(datum_str, val_str, utd_str, mom_str, tot_str, omx_str):
+                                st.success(f"Sparat! Total portfölj beräknad till: {totalt_portfoljvarde:,.2f} SEK")
                                 st.rerun()
-                        else: st.error("Kunde inte hitta indexkurs.")
-                    except Exception as e: st.error(f"Fel: {e}")
+                        else: 
+                            st.error("Kunde inte hitta indexkurs för detta datum. Testa en närliggande vardag.")
+                    except Exception as e: 
+                        st.error(f"Fel: {e}")
 
     with st.spinner("Hämtar historik..."):
         hist_df = ladda_historik_gspread()
@@ -157,8 +197,17 @@ if meny_val == "📊 Översikt & Historik":
             st.line_chart(hist_df.set_index('datum')[['Portfölj (%)', 'OMX Stockholm PI (%)']])
             
         st.subheader("Historisk datatabell")
-        st.dataframe(hist_df.rename(columns={'datum':'Datum', 'portfolj_varde':'Portföljvärde (SEK)', 'omx_index':'OMXSPI Index'}), use_container_width=True)
-    else: st.warning("Kalkylarket är tomt.")
+        vy_df = hist_df.rename(columns={
+            'datum': 'Datum', 
+            'varde_value': 'Value (SEK)', 
+            'varde_utdelning': 'Utdelning (SEK)', 
+            'varde_momentum': 'Momentum (SEK)', 
+            'portfolj_varde': 'Total Portfölj (SEK)', 
+            'omx_index': 'OMXSPI Index'
+        })
+        st.dataframe(vy_df, use_container_width=True)
+    else: 
+        st.warning("Kalkylarket är tomt. Logga dina första värden ovan!")
 
 # --- SIDA 2: MIN PORTFÖLJ ---
 elif meny_val == "💼 Min Portfölj":
@@ -203,7 +252,7 @@ elif meny_val == "💼 Min Portfölj":
 # --- SIDA 3: SÄSONGSMÖNSTER & VIKTNING ---
 elif meny_val == "📅 Säsongsmönster & Viktning":
     st.title("📅 Säsongsmönster & Dynamisk Viktning")
-    st.markdown("Statistiska säsongsmönster (kalendareffekter) påverkar kraftigt hur strategier som Värde, Utdelning och Momentum presterar. Genom att dynamiskt vikta om portföljen kan du undvika kända 'krascher' och rida på säsongstrender.")
+    st.markdown("Statistiska säsongsmönster (kalendareffekter) påverkar kraftigt hur strategier som Värde, Utdelning och Momentum presterar.")
 
     nuvarande_manad = datetime.now().month
     manader = ["Januari", "Februari", "Mars", "April", "Maj", "Juni", "Juli", "Augusti", "September", "Oktober", "November", "December"]
@@ -211,19 +260,18 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
 
     st.subheader(f"📍 Aktuell rekommendation för {manad_namn}")
 
-    # Logik för dynamisk påminnelse
     if nuvarande_manad in [11, 12, 1]:
         st.success("🟢 **Skala upp: Värdestrategi (Value)**\n\nUtnyttja januarieffekten. Positionera dig i nedpressade värdebolag nu.")
         if nuvarande_manad in [12, 1]:
-            st.error("🔴 **Undvik / Skala ner: Momentum**\n\n**CRITICAL:** Momentum riskerar vinsthemtagningar. Januari är historiskt den sämsta månaden för Momentum-strategin. Skala ner nu för att undvika nyårskraschen i vinnaraktier.")
+            st.error("🔴 **Undvik / Skala ner: Momentum**\n\n**CRITICAL:** Momentum riskerar vinsthemtagningar. Januari är historiskt den sämsta månaden för Momentum-strategin.")
     elif nuvarande_manad in [2, 3, 4]:
-        st.success("🟢 **Skala upp: Utdelning (Dividend) & Momentum**\n\nRid på utdelningsrallyt fram till april. Momentum fungerar utmärkt nu när trenderna har stabiliserats efter nyår.")
-        st.warning("🟡 **Skala ner: Värde (Value)**\n\nJanuarieffekten är avslutad. Värde tenderar att prestera svagare under våren.")
+        st.success("🟢 **Skala upp: Utdelning (Dividend) & Momentum**\n\nRid på utdelningsrallyt fram till april. Momentum fungerar utmärkt nu.")
+        st.warning("🟡 **Skala ner: Värde (Value)**\n\nJanuarieffekten är avslutad.")
     elif nuvarande_manad in [5, 6, 7, 8]:
-        st.info("🟡 **Fokus: Kassalikviditet / Defensivt**\n\n'Sell in May and go away' har viss statistisk bärighet. Marknaden går ofta på tomgång.")
-        st.error("🔴 **Skala ner: Utdelning (Dividend) & Värde (Value)**\n\nUtdelningsaktier handlas ofta i ett 'vakuum' efter att vårens utdelningar avskiljts. Värdebolag missgynnas av sommarens lägre likviditet.")
+        st.info("🟡 **Fokus: Kassalikviditet / Defensivt**\n\n'Sell in May and go away' har viss statistisk bärighet.")
+        st.error("🔴 **Skala ner: Utdelning (Dividend) & Värde (Value)**\n\nHögutdelare hamnar i ett vakuum efter våren. Värdebolag missgynnas av låg likviditet.")
     elif nuvarande_manad in [9, 10]:
-        st.success("🟢 **Skala upp: Momentum**\n\nMarknaden vaknar till liv igen efter sommaren. Starka trender brukar etableras inför slutsprinten på året. Perfekt miljö för Momentum.")
+        st.success("🟢 **Skala upp: Momentum**\n\nMarknaden vaknar till liv igen efter sommaren. Starka trender brukar etableras.")
 
     st.markdown("---")
     st.subheader("📊 Årshjul för kvantstrategierna")
@@ -232,33 +280,9 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
         "Period": ["Vinter (Nov – Jan)", "Vår (Feb – April)", "Sommar (Maj – Aug)", "Höst (Sep – Okt)"],
         "Fokus / Skala upp": ["Value", "Dividend & Momentum", "Kassalikviditet / Defensivt", "Momentum"],
         "Undvik / Skala ner": ["Momentum", "Value (efter jan)", "Dividend & Value", "-"],
-        "Strategisk tanke": ["Utnyttja januarieffekten. Positionera dig i nedpressade värdebolag innan nyår. Sänk momentum i december/januari för att undvika nyårskraschen.", "Rid på utdelningsrallyt fram till april. Momentum fungerar bra här när trenderna stabiliserats efter nyår.", "'Sell in May and go away' har viss statistisk bärighet. Utdelningsaktier är ofta trötta efter avskilda utdelningar.", "Marknaden vaknar till liv igen och starka trender brukar etableras inför slutsprinten på året."]
+        "Strategisk tanke": ["Utnyttja januarieffekten. Sänk momentum i december/januari.", "Rid på utdelningsrallyt fram till april.", "'Sell in May and go away' har viss bärighet.", "Marknaden vaknar till liv och trender etableras."]
     }
     st.table(pd.DataFrame(data_sasong))
-
-    with st.expander("📚 Läs djupdykning om respektive strategi"):
-        st.markdown("""
-        ### 1. Värdestrategi (Value)
-        Värdebolag (låga multiplar som P/E, P/B) tenderar att prestera bäst när marknaden är i en fas av ekonomisk återhämtning, men har också ett väldigt specifikt mönster kring årsskiftet.
-        * **Bästa period:** November – Februari (Särskilt januari)
-        * **Varför:** Drivs av januarieffekten och skatteplanering. I november/december säljer fonder/privata förloraraktier (ofta värdebolag) för att kvitta vinster mot förluster i deklarationen. I januari köps dessa billiga aktier tillbaka, vilket skapar en kraftig rekyl uppåt.
-        * **Svagaste period:** Sommarmånaderna (Juni – Augusti)
-        * **Varför:** Under lugna sommarmånader med lägre likviditet tenderar marknaden att favorisera defensiva bolag, vilket missgynnar djupa värdebolag.
-
-        ### 2. Utdelningsstrategi (Dividend)
-        Utdelningsaktier har en väldigt naturlig cykel som styrs av bolagsstämmor och utdelningsperioder, särskilt på den svenska marknaden.
-        * **Bästa period:** Januari – April
-        * **Varför:** "Uppladdningen" inför utdelningssäsongen (peakar april/maj i Sverige). Investerare söker hög direktavkastning för att säkra vårens kassaflöden. Kursen drivs ofta upp innan aktien handlas exklusive utdelning.
-        * **Svagaste period:** Maj – Augusti
-        * **Varför:** När utdelningarna har avskiljts under våren dras kurserna ner motsvarande utdelningsbeloppet. Högutdelare hamnar i ett "vakuum" där nästa utdelning är ett helt år bort.
-
-        ### 3. Momentum-strategi
-        Att köpa det som har gått bäst de senaste 3–12 månaderna fungerar bäst i mogna, tydliga trender och kraschar ofta vid tvära trendvändningar.
-        * **Bästa period:** Februari – Maj samt September – November
-        * **Varför:** Marknaden har ofta etablerat tydliga trender efter rapportperioderna (Q4 i februari, Q2 i juli/augusti). Institutionellt kapital flockas till vinnarna.
-        * **CRITICAL:** Undvik/skala ner i Januari (och delvis December)
-        * **Varför:** "The Momentum Crash". Eftersom förloraraktierna (värdebolagen) studsar upp kraftigt i januari, händer ofta det omvända med årets vinnare (momentumaktierna). De drabbas av vinsthemtagningar.
-        """)
 
 # --- SIDA 4, 5, 6: STRATEGIERNA ---
 elif "Strategi" in meny_val:
@@ -277,7 +301,6 @@ elif "Strategi" in meny_val:
                     else: df[k] = 5000
                     df[f'Rank_{k}'] = df[k].rank(ascending=True, method='min')
                 df['Total_Rank'] = df[[f'Rank_{k}' for k in v_kols]].sum(axis=1) / len(v_kols)
-                
                 k_3m, k_6m, k_12m = next((c for c in df.columns if '3m' in c.lower()), df.columns[0]), next((c for c in df.columns if '6m' in c.lower()), df.columns[0]), next((c for c in df.columns if '1år' in c.lower() or '12m' in c.lower()), df.columns[0])
                 df['Momentum'] = (pd.to_numeric(df[k_3m], errors='coerce').fillna(0) + pd.to_numeric(df[k_6m], errors='coerce').fillna(0) + pd.to_numeric(df[k_12m], errors='coerce').fillna(0)) / 3
                 topp = df.nsmallest(40, 'Total_Rank').sort_values(by='Momentum', ascending=False).head(10)
@@ -312,7 +335,6 @@ elif meny_val == "⚖️ Ombalansering":
     st.session_state['aktiv_strategi'] = vald_strat
     
     st.info(f"📍 Aktuellt läge: Jämför befintlig **{vald_strat}**-portfölj med dina inskickade målaktier.")
-    
     kassa = st.number_input("Nysparande / Ledig kassa att tillföra (SEK)", min_value=0, value=10000, step=1000)
     
     col1, col2 = st.columns(2)
