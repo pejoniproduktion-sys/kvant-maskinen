@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v4.4", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v4.5", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -98,10 +98,15 @@ def spara_innehav_gspread(df_ny, strategi):
             worksheet = sh.add_worksheet(title=fliknamn, rows="100", cols="5")
         worksheet.clear() 
         worksheet.append_row(["Bolagsnamn", "Ticker", "Antal", "Kurs"]) 
-        df_clean = df_ny.dropna(subset=['Ticker'])
+        
+        df_clean = df_ny.copy()
+        df_clean = df_clean.dropna(subset=['Ticker'])
         df_clean = df_clean[df_clean['Ticker'].astype(str).str.strip() != '']
+        
         if not df_clean.empty: 
-            worksheet.append_rows(df_clean[["Bolagsnamn", "Ticker", "Antal", "Kurs"]].values.tolist())
+            # SVENSK FORMATERING: Byt till kommatecken innan vi skickar till Sheets
+            df_clean['Kurs'] = df_clean['Kurs'].apply(lambda x: str(float(x)).replace('.', ','))
+            worksheet.append_rows(df_clean[["Bolagsnamn", "Ticker", "Antal", "Kurs"]].values.tolist(), value_input_option='USER_ENTERED')
         return True
     except: 
         return False
@@ -175,12 +180,14 @@ def ladda_och_tvatta_basdata(fil):
     k_tick = next((c for c in df.columns if 'ticker' in c.lower()), df.columns[1])
     k_kurs = next((c for c in df.columns if 'aktiekurs' in c.lower() or ('kurs' in c.lower() and 'utveck' not in c.lower())), None)
     if not k_kurs: k_kurs = df.columns[2]
-    df[k_kurs] = pd.to_numeric(df[k_kurs], errors='coerce').fillna(0)
+    
+    # Svensk sanering: fixa kommatecken från CSV-filer
+    df[k_kurs] = pd.to_numeric(df[k_kurs].astype(str).str.replace(' ', '').str.replace(',', '.'), errors='coerce').fillna(0)
     
     k_bv = next((c for c in df.columns if 'börsvärde' in c.lower()), None)
     k_lista = next((c for c in df.columns if 'lista' in c.lower() or 'marknad' in c.lower()), None)
     if k_bv:
-        df[k_bv] = pd.to_numeric(df[k_bv], errors='coerce').fillna(0)
+        df[k_bv] = pd.to_numeric(df[k_bv].astype(str).str.replace(' ', '').str.replace(',', '.'), errors='coerce').fillna(0)
         df = df[df[k_bv] >= 500].copy()
     if k_lista:
         df = df[df[k_lista].astype(str).str.contains('Large|Mid|Small', case=False, na=False)].copy()
@@ -336,7 +343,6 @@ elif meny_val == "💼 Min Portfölj":
                 for idx, row in temp_bef.iterrows():
                     t = str(row['Ticker']).upper().replace(" SEK", "").strip()
                     if not t: continue
-                    # Rätta till svenska tickers för Yahoo (t.ex. SSAB B -> SSAB-B.ST)
                     t = t.replace(" ", "-")
                     yf_ticker = t if "." in t else f"{t}.ST"
                     
@@ -346,7 +352,7 @@ elif meny_val == "💼 Min Portfölj":
                         if not hist.empty:
                             temp_bef.at[idx, 'Kurs'] = round(float(hist['Close'].iloc[-1]), 2)
                     except:
-                        pass # Ignorera fel och gå till nästa
+                        pass
                         
                 st.session_state[f'bef_portfolj_{vald}'] = temp_bef
                 st.success("Live-kurser hämtade!")
