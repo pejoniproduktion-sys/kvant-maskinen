@@ -8,9 +8,9 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # ==========================================
-# 1. INSTÄLLNINGAR & GOOGLE CONNECTIONS
+# 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v4.1", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v4.2", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -25,13 +25,17 @@ def ladda_historik_gspread():
         worksheet = sh.worksheet("Historik")
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
-        if df.empty: return pd.DataFrame(columns=['datum', 'varde_value', 'varde_utdelning', 'varde_momentum', 'portfolj_varde', 'omx_index'])
+        if df.empty: 
+            return pd.DataFrame(columns=['datum', 'varde_value', 'varde_utdelning', 'varde_momentum', 'portfolj_varde', 'omx_index'])
         df['datum'] = df['datum'].astype(str)
         for col in ['varde_value', 'varde_utdelning', 'varde_momentum', 'portfolj_varde', 'omx_index']:
-            if col not in df.columns: df[col] = 0
-            else: df[col] = pd.to_numeric(df[col].astype(str).str.replace(' ', '').str.replace(',', '.'), errors='coerce').fillna(0)
+            if col not in df.columns: 
+                df[col] = 0.0
+            else: 
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(' ', '').str.replace(',', '.'), errors='coerce').fillna(0.0)
         return df.sort_values('datum').reset_index(drop=True)
-    except: return pd.DataFrame(columns=['datum', 'varde_value', 'varde_utdelning', 'varde_momentum', 'portfolj_varde', 'omx_index'])
+    except: 
+        return pd.DataFrame(columns=['datum', 'varde_value', 'varde_utdelning', 'varde_momentum', 'portfolj_varde', 'omx_index'])
 
 def spara_historik_gspread(datum_str, v_val_str, v_utd_str, v_mom_str, tot_str, omx_str):
     try:
@@ -55,9 +59,11 @@ def spara_historik_gspread(datum_str, v_val_str, v_utd_str, v_mom_str, tot_str, 
             worksheet.update_cell(found_row, 4, v_mom_str)
             worksheet.update_cell(found_row, 5, tot_str)
             worksheet.update_cell(found_row, 6, omx_str)
-        else: worksheet.append_row([datum_str, v_val_str, v_utd_str, v_mom_str, tot_str, omx_str])
+        else: 
+            worksheet.append_row([datum_str, v_val_str, v_utd_str, v_mom_str, tot_str, omx_str])
         return True
-    except: return False
+    except: 
+        return False
 
 # --- Funktioner för Innehav ---
 def ladda_innehav_gspread(strategi):
@@ -65,48 +71,86 @@ def ladda_innehav_gspread(strategi):
     try:
         gc = get_gspread_client()
         sh = gc.open_by_url(st.secrets["google_sheet_url"])
-        try: worksheet = sh.worksheet(fliknamn)
+        try: 
+            worksheet = sh.worksheet(fliknamn)
         except:
             worksheet = sh.add_worksheet(title=fliknamn, rows="100", cols="5")
             worksheet.append_row(["Bolagsnamn", "Ticker", "Antal", "Kurs"])
             return pd.DataFrame(columns=["Bolagsnamn", "Ticker", "Antal", "Kurs"])
+        
         data = worksheet.get_all_records()
-        return pd.DataFrame(data) if data else pd.DataFrame(columns=["Bolagsnamn", "Ticker", "Antal", "Kurs"])
-    except: return pd.DataFrame(columns=["Bolagsnamn", "Ticker", "Antal", "Kurs"])
+        if not data: 
+            return pd.DataFrame(columns=["Bolagsnamn", "Ticker", "Antal", "Kurs"])
+            
+        df = pd.DataFrame(data)
+        return df
+    except: 
+        return pd.DataFrame(columns=["Bolagsnamn", "Ticker", "Antal", "Kurs"])
 
 def spara_innehav_gspread(df_ny, strategi):
     fliknamn = f"Innehav_{strategi}"
     try:
         gc = get_gspread_client()
         sh = gc.open_by_url(st.secrets["google_sheet_url"])
-        try: worksheet = sh.worksheet(fliknamn)
-        except: worksheet = sh.add_worksheet(title=fliknamn, rows="100", cols="5")
+        try: 
+            worksheet = sh.worksheet(fliknamn)
+        except: 
+            worksheet = sh.add_worksheet(title=fliknamn, rows="100", cols="5")
         worksheet.clear() 
         worksheet.append_row(["Bolagsnamn", "Ticker", "Antal", "Kurs"]) 
         df_clean = df_ny.dropna(subset=['Ticker'])
         df_clean = df_clean[df_clean['Ticker'].astype(str).str.strip() != '']
-        if not df_clean.empty: worksheet.append_rows(df_clean[["Bolagsnamn", "Ticker", "Antal", "Kurs"]].values.tolist())
+        if not df_clean.empty: 
+            worksheet.append_rows(df_clean[["Bolagsnamn", "Ticker", "Antal", "Kurs"]].values.tolist())
         return True
-    except: return False
+    except: 
+        return False
 
 # ==========================================
-# 2. SESSION STATE (APPENS MINNE)
+# 2. GLOBAL DATASANERING & SESSION STATE
 # ==========================================
 strategier = ["Value", "Utdelning", "Momentum"]
+
 for s in strategier:
     if f'bef_portfolj_{s}' not in st.session_state:
         st.session_state[f'bef_portfolj_{s}'] = ladda_innehav_gspread(s)
+    
+    # KRAFTFULL STRIPPNING & FORMATERING FÖR ATT ELIMINERA ALLA FELKÄLLOR
+    df = st.session_state[f'bef_portfolj_{s}']
+    if isinstance(df, pd.DataFrame):
+        # Fixa skiftlagsfel på kolumner (t.ex. 'antal' -> 'Antal')
+        rename_map = {c: c.capitalize().strip() for c in df.columns if c.lower().strip() in ['bolagsnamn', 'ticker', 'antal', 'kurs']}
+        df = df.rename(columns=rename_map)
+        
+        # Garantera att alla baskolumner existerar
+        for col in ["Bolagsnamn", "Ticker", "Antal", "Kurs"]:
+            if col not in df.columns:
+                df[col] = 0 if col in ["Antal", "Kurs"] else ""
+        
+        # Säkerställ strikta datatyper
+        df['Ticker'] = df['Ticker'].astype(str).str.upper().str.strip()
+        df['Bolagsnamn'] = df['Bolagsnamn'].astype(str).str.strip()
+        df['Antal'] = pd.to_numeric(df['Antal'], errors='coerce').fillna(0).astype(int)
+        df['Kurs'] = pd.to_numeric(df['Kurs'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0.0).astype(float)
+        
+        # Filtrera bort eventuella skräprader utan ticker
+        df = df[df['Ticker'] != '']
+        st.session_state[f'bef_portfolj_{s}'] = df.reset_index(drop=True)
+    else:
+        st.session_state[f'bef_portfolj_{s}'] = pd.DataFrame(columns=["Bolagsnamn", "Ticker", "Antal", "Kurs"])
 
-if 'mal_portfolj' not in st.session_state: st.session_state['mal_portfolj'] = pd.DataFrame(columns=["Bolagsnamn", "Ticker", "Kurs"])
-if 'aktiv_strategi' not in st.session_state: st.session_state['aktiv_strategi'] = "Value"
-if 'ombalansering_beraknad' not in st.session_state: st.session_state['ombalansering_beraknad'] = False
+if 'mal_portfolj' not in st.session_state: 
+    st.session_state['mal_portfolj'] = pd.DataFrame(columns=["Bolagsnamn", "Ticker", "Kurs"])
+if 'aktiv_strategi' not in st.session_state: 
+    st.session_state['aktiv_strategi'] = "Value"
+if 'ombalansering_beraknad' not in st.session_state: 
+    st.session_state['ombalansering_beraknad'] = False
 
-# Gemensam funktion för rekommenderad viktning beroende på månad
 def hamta_malviktning(manad):
-    if manad in [11, 12, 1]: return {"Value": 0.50, "Utdelning": 0.30, "Momentum": 0.20} # Vinter
-    elif manad in [2, 3, 4]: return {"Value": 0.20, "Utdelning": 0.40, "Momentum": 0.40} # Vår
-    elif manad in [5, 6, 7, 8]: return {"Value": 0.30, "Utdelning": 0.30, "Momentum": 0.40} # Sommar (Defensivt, letar momentum som står emot)
-    else: return {"Value": 0.20, "Utdelning": 0.20, "Momentum": 0.60} # Höst (Starka trender)
+    if manad in [11, 12, 1]: return {"Value": 0.50, "Utdelning": 0.30, "Momentum": 0.20}
+    elif manad in [2, 3, 4]: return {"Value": 0.20, "Utdelning": 0.40, "Momentum": 0.40}
+    elif manad in [5, 6, 7, 8]: return {"Value": 0.30, "Utdelning": 0.30, "Momentum": 0.40}
+    else: return {"Value": 0.20, "Utdelning": 0.20, "Momentum": 0.60}
 
 # ==========================================
 # 3. SIDOMENY & STRIPPNING/TVÄTT
@@ -191,7 +235,7 @@ if meny_val == "📊 Översikt & Historik":
             senaste_pct, senaste_sek = graf_df.iloc[-1], hist_df.iloc[-1]
             
             c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("💼 Total Portfölj", f"{senaste_sek['portfolj_varde']:,.0f} kr".replace(',', ' '), f"{senaste_pct['Total Portfölj (%)']:.1f} % totalt")
+            c1.metric("💼 Total Portfölj", f"{senaste_sek['portfolj_varde']:,.0f} kr".replace(',', ' '), f"{senaste_pct['Total Portfölj (%)']:.1f} %")
             c2.metric("📈 Value", f"{senaste_sek['varde_value']:,.0f} kr".replace(',', ' '), f"{senaste_pct['Value (%)']:.1f} %")
             c3.metric("💸 Utdelning", f"{senaste_sek['varde_utdelning']:,.0f} kr".replace(',', ' '), f"{senaste_pct['Utdelning (%)']:.1f} %")
             c4.metric("⚡ Momentum", f"{senaste_sek['varde_momentum']:,.0f} kr".replace(',', ' '), f"{senaste_pct['Momentum (%)']:.1f} %")
@@ -205,17 +249,14 @@ if meny_val == "📊 Översikt & Historik":
 # --- SIDA 2: PORTFÖLJANALYS & RÅDGIVARE ---
 elif meny_val == "🧠 Portföljanalys & Råd":
     st.title("🧠 Portföljanalys & AI-Rådgivare")
-    st.write("Verktyget läser av din *befintliga portfölj live* från kalkylarket, jämför din nuvarande balans mot den statistiskt optimala viktningen för årets månad, och utvärderar din överavkastning (Alfa).")
     
     varden = {}
-    total_nu = 0
+    total_nu = 0.0
     for s in strategier:
         df = st.session_state[f'bef_portfolj_{s}']
-        if not df.empty and 'Antal' in df.columns and 'Kurs' in df.columns:
-            summa = (pd.to_numeric(df['Antal'], errors='coerce').fillna(0) * pd.to_numeric(df['Kurs'], errors='coerce').fillna(0)).sum()
-            varden[s] = summa
-            total_nu += summa
-        else: varden[s] = 0
+        summa = (df['Antal'] * df['Kurs']).sum()
+        varden[s] = float(summa)
+        total_nu += float(summa)
 
     if total_nu > 0:
         manad_nu = datetime.now().month
@@ -242,7 +283,7 @@ elif meny_val == "🧠 Portföljanalys & Råd":
         for bd in balans_data:
             diff = float(bd['Avvikelse'].replace('%', '').strip())
             kr_diff = (total_nu * mal_vikter[bd['Strategi']]) - varden[bd['Strategi']]
-            if diff > 5: st.warning(f"📉 **Sänk {bd['Strategi']}:** Du har en kraftig övervikt. Överväg att skala ner med ca **{abs(kr_diff):,.0f} kr** vid nästa ombalansering.")
+            if diff > 5: st.warning(f"📉 **Sänk {bd['Strategi']}:** Du har en övervikt. Överväg att skala ner med ca **{abs(kr_diff):,.0f} kr** vid nästa ombalansering.")
             elif diff < -5: st.info(f"📈 **Öka {bd['Strategi']}:** Du är underviktad gentemot målvikt. Överväg att tillföra ca **{kr_diff:,.0f} kr**.")
         
         hist_df = ladda_historik_gspread()
@@ -257,10 +298,10 @@ elif meny_val == "🧠 Portföljanalys & Råd":
             
             c1, c2 = st.columns(2)
             c1.metric("Din Utveckling vs Index (Alfa)", f"{alfa:+.2f} procentenheter")
-            if alfa > 0: c2.success("Fantastiskt jobbat! Din Kvant-maskin slår marknaden. Fortsätt följa dina regler mekaniskt.")
-            else: c2.warning("Du underpresterar just nu mot index. Kvantstrategier kräver tålamod. Låt modellerna arbeta och undvik emotionella beslut.")
+            if alfa > 0: c2.success("Fantastiskt jobbat! Din Kvant-maskin slår marknaden.")
+            else: c2.warning("Du underpresterar just nu mot index. Kvantstrategier kräver tålamod.")
     else:
-        st.info("Inga innehav hittades. Lägg in dina aktier i 'Min Portfölj' för att se analysen.")
+        st.info("Inga innehav registrerades i analysmotorn. Lägg in dina rader under 'Min Portfölj' för att starta analysen.")
 
 # --- SIDA 3: MIN PORTFÖLJ ---
 elif meny_val == "💼 Min Portfölj":
@@ -268,15 +309,20 @@ elif meny_val == "💼 Min Portfölj":
     vald = st.selectbox("Välj portfölj att hantera:", strategier, index=strategier.index(st.session_state['aktiv_strategi']))
     st.session_state['aktiv_strategi'] = vald 
     st.dataframe(st.session_state[f'bef_portfolj_{vald}'], use_container_width=True)
+    
     with st.expander("➕ Lägg till eller ändra en aktie manuellt"):
         with st.form("lagg_till_form"):
             col_namn, col_tick = st.text_input("Bolagsnamn"), st.text_input("Ticker")
             col_antal, col_kurs = st.number_input("Antal", min_value=0, step=1), st.number_input("Kurs", min_value=0.0, step=0.1)
             if st.form_submit_button("Spara i tabell"):
                 df = st.session_state[f'bef_portfolj_{vald}'].copy()
-                new_row = {"Bolagsnamn": col_namn, "Ticker": col_tick.upper().strip(), "Antal": int(col_antal), "Kurs": float(col_kurs)}
-                if col_tick.upper().strip() in df['Ticker'].values: df.loc[df['Ticker'] == col_tick.upper().strip(), :] = [new_row['Bolagsnamn'], new_row['Ticker'], new_row['Antal'], new_row['Kurs']]
-                else: df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                new_row = {"Bolagsnamn": col_namn.strip(), "Ticker": col_tick.upper().strip(), "Antal": int(col_antal), "Kurs": float(col_kurs)}
+                
+                if col_tick.upper().strip() in df['Ticker'].values: 
+                    df.loc[df['Ticker'] == col_tick.upper().strip(), ["Bolagsnamn", "Ticker", "Antal", "Kurs"]] = [new_row['Bolagsnamn'], new_row['Ticker'], new_row['Antal'], new_row['Kurs']]
+                else: 
+                    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                
                 st.session_state[f'bef_portfolj_{vald}'] = df
                 st.rerun()
     c1, c2 = st.columns(2)
@@ -293,67 +339,63 @@ elif meny_val == "💼 Min Portfölj":
             st.rerun()
     with c2:
         if st.button(f"💾 Spara {vald}-portföljen permanent"):
-            if spara_innehav_gspread(st.session_state[f'bef_portfolj_{vald}'], vald): st.success("Sparat i molnet!")
+            if spara_innehav_gspread(st.session_state[f'bef_portfolj_{vald}'], vald): 
+                st.success("Sparat i molnet!")
 
 # --- SIDA 4: SÄSONGSMÖNSTER & VIKTNING ---
 elif meny_val == "📅 Säsongsmönster & Viktning":
     st.title("📅 Säsongsmönster & Dynamisk Viktning")
-    st.markdown("Statistiska kalendareffekter och makrocykler påverkar kraftigt vilka kvantfaktorer som fungerar bäst. Genom dynamisk över/undervikt skapar du en kant mot marknaden.")
-
+    
     nuvarande_manad = datetime.now().month
     manader = ["Januari", "Februari", "Mars", "April", "Maj", "Juni", "Juli", "Augusti", "September", "Oktober", "November", "December"]
     manad_namn = manader[nuvarande_manad - 1]
 
     st.subheader(f"📍 Analys för {manad_namn}")
     
-    # 1. Hämta rekommenderade vikter
     mal_vikter = hamta_malviktning(nuvarande_manad)
     
-    # 2. Hämta nuvarande vikter från portföljen
     varden = {}
-    total_nu = 0
+    total_nu = 0.0
     for s in strategier:
         df = st.session_state[f'bef_portfolj_{s}']
-        if not df.empty and 'Antal' in df.columns and 'Kurs' in df.columns:
-            summa = (pd.to_numeric(df['Antal'], errors='coerce').fillna(0) * pd.to_numeric(df['Kurs'], errors='coerce').fillna(0)).sum()
-            varden[s] = summa
-            total_nu += summa
-        else: varden[s] = 0
-    nu_vikter = {s: (varden[s]/total_nu if total_nu > 0 else 0) for s in strategier}
+        summa = (df['Antal'] * df['Kurs']).sum()
+        varden[s] = float(summa)
+        total_nu += float(summa)
+        
+    nu_vikter = {s: (varden[s]/total_nu if total_nu > 0 else 0.0) for s in strategier}
 
-    st.write("📊 **Jämförelse: Din Nuvarande Portfölj vs. Målvikt**")
+    st.write("📊 **Jämförelse: Din Nuvarande Portfölj vs. Rekommenderad Målvikt**")
     
     if total_nu > 0:
         c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown(f"**📈 Value:** Nuv: **{nu_vikter['Value']*100:.1f}%** ➔ Mål: **{mal_vikter['Value']*100:.0f}%**")
-            st.progress(min(nu_vikter['Value'], 1.0), text="Din vikt (Value)")
-            st.progress(mal_vikter['Value'], text="Målvikt (Value)")
+            st.progress(min(float(nu_vikter['Value']), 1.0), text="Din reella vikt")
+            st.progress(float(mal_vikter['Value']), text="Optimal målvikt")
         with c2:
             st.markdown(f"**💸 Utdelning:** Nuv: **{nu_vikter['Utdelning']*100:.1f}%** ➔ Mål: **{mal_vikter['Utdelning']*100:.0f}%**")
-            st.progress(min(nu_vikter['Utdelning'], 1.0), text="Din vikt (Utdelning)")
-            st.progress(mal_vikter['Utdelning'], text="Målvikt (Utdelning)")
+            st.progress(min(float(nu_vikter['Utdelning']), 1.0), text="Din reella vikt")
+            st.progress(float(mal_vikter['Utdelning']), text="Optimal målvikt")
         with c3:
             st.markdown(f"**⚡ Momentum:** Nuv: **{nu_vikter['Momentum']*100:.1f}%** ➔ Mål: **{mal_vikter['Momentum']*100:.0f}%**")
-            st.progress(min(nu_vikter['Momentum'], 1.0), text="Din vikt (Momentum)")
-            st.progress(mal_vikter['Momentum'], text="Målvikt (Momentum)")
+            st.progress(min(float(nu_vikter['Momentum']), 1.0), text="Din reella vikt")
+            st.progress(float(mal_vikter['Momentum']), text="Optimal målvikt")
     else:
-        st.info("⚠️ Lägg in dina aktier under 'Min Portfölj' för att se din nuvarande balans här.")
-        st.write(f"**Rekommenderad portföljbalans just nu:** Value: {mal_vikter['Value']*100:.0f}% | Utdelning: {mal_vikter['Utdelning']*100:.0f}% | Momentum: {mal_vikter['Momentum']*100:.0f}%")
+        st.info("⚠️ Lägg in dina aktiva aktier under 'Min Portfölj' för att rita upp dina reella jämförelse-mätare här.")
+        st.write(f"**Målvikt just nu:** Value: {mal_vikter['Value']*100:.0f}% | Utdelning: {mal_vikter['Utdelning']*100:.0f}% | Momentum: {mal_vikter['Momentum']*100:.0f}%")
 
     st.markdown("---")
-    
     if nuvarande_manad in [11, 12, 1]:
         st.success("🟢 **Fokus: Värdestrategi (Value)**\n\nDu befinner dig i bästa möjliga miljö för Värdebolag. Nedpressade bolag säljs av fondförvaltare i skatteplaneringssyfte innan nyår (Tax-loss harvesting). I januari köps dessa tillbaka vilket skapar kraftiga studsar uppåt (Januarieffekten).")
         if nuvarande_manad in [12, 1]:
             st.error("🔴 **Varning: Momentum Crash**\n\nEftersom förlorarna (Värde) studsar i januari, sker det motsatta för årets stora vinnare (Momentum). Investerare plockar hem vinsten. Januari är årets absolut sämsta månad för en renodlad Momentum-strategi.")
     elif nuvarande_manad in [2, 3, 4]:
-        st.success("🟢 **Fokus: Utdelning & Momentum**\n\nDetta är fönstret för utdelningsjägare! Kapital roterar in i högutdelare för att säkra vår-utdelningarna, vilket driver upp kurserna fram till X-dagen. Samtidigt har Momentum återhämtat sig från januarikraschen och bolagens bokslut (Q4) i februari har skapat tydliga vinnartrender.")
+        st.success("🟢 **Fokus: Utdelning & Momentum**\n\nDetta är fönstret för utdelningsjägare! Kapital roterar in i högutdelare för att säkra vår-utdelningarna, vilket driver upp kurserna fram till X-dagen. Samtidigt har Momentum återhämtat sig från januarikraschen.")
     elif nuvarande_manad in [5, 6, 7, 8]:
-        st.info("🟡 **Fokus: Marknadens Vakuum (Defensivt)**\n\n'Sell in May and go away' existerar av en anledning. Sommarmånaderna lider ofta av låg likviditet och nyhetstorka.")
-        st.error("🔴 **Varning: Utdelningsfall**\n\nNär vårens utdelningar är avskiljda tappar dessa aktier ofta kraft under sommaren. Nästa kassaflöde är ett år bort, vilket pressar avkastningen.")
+        st.info("🟡 **Fokus: Marknadens Vakuum (Defensivt)**\n\n'Sell in May and go away' existerar av en anledning. Sommarmånaderna lider ofta av låg likviditet.")
+        st.error("🔴 **Varning: Utdelningsfall**\n\nNär vårens utdelningar är avskiljda tappar dessa aktier ofta kraft under sommaren.")
     elif nuvarande_manad in [9, 10]:
-        st.success("🟢 **Fokus: Momentum**\n\nLikviditeten är tillbaka. Rapporterna i slutet av sommaren (Q2) har etablerat nya starka trender som fondkapitalet nu börjar följa inför slutsprinten på året. Rid på vinnarna!")
+        st.success("🟢 **Fokus: Momentum**\n\nLikviditeten är tillbaka. Rapporterna i slutet av sommaren (Q2) har etablerat nya starka trender. Rid på vinnarna!")
 
     st.markdown("---")
     st.subheader("📊 Översiktlig Årscykel")
@@ -368,48 +410,31 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
 elif meny_val == "📖 Om Kvantstrategierna":
     st.title("📖 Dokumentation av Kvantstrategierna")
     st.markdown("""
-    I denna sektion förklaras exakt vilken logik, vilka formler och vilka vetenskapliga kriterier som Kvant-maskinen använder i bakgrunden när den sållar din Börsdata-export.
-    
     *Gemensamt grundkrav för alla strategier i din maskin:*
     * **Storlek:** Endast bolag med ett börsvärde >= 500 MSEK.
-    * **Listor:** Endast bolag på Large Cap, Mid Cap och Small Cap (inga First North eller Spotlight för att undvika likviditetsfällor).
+    * **Listor:** Endast bolag på Large Cap, Mid Cap och Small Cap.
     ---
     """)
     
     st.header("📈 1. Trending Value")
-    st.write("**Din Konfiguration:** Appen letar efter aktier som är fundamentalt extremt billiga på flera parametrar samtidigt, men som har slutat falla och börjat vända uppåt (Value + Momentum).")
-    st.write("**Matematisk Sållning:**")
     st.markdown("""
     1. Koden rankar alla godkända bolag från 1 (billigast) och uppåt på följande nyckeltal: **P/E, P/S, P/B, P/FCF, och EV/EBITDA**.
-    2. Saknas data (ex. P/E vid förlust) straffas bolaget med ett högt fiktivt värde (5000) för att hamna längst ner i rankingen.
-    3. Totalranken snittas.
-    4. De 40 absolut billigaste bolagen plockas ut.
-    5. Maskinen beräknar **Sammansatt Momentum** (Medelvärdet av 3m, 6m och 12m prisutveckling).
-    6. De 40 billigaste bolagen sorteras så att de 10 med bäst Momentum hamnar högst upp. **Resultatet är Topp 10 Trending Value.**
+    2. Saknas data straffas bolaget med ett högt fiktivt värde (5000) för att hamna längst ner i rankingen.
+    3. De 40 absolut billigaste bolagen plockas ut.
+    4. De 40 billigaste bolagen sorteras så och de 10 med bäst **Sammansatt Momentum** (snitt av 3m, 6m, 12m) väljs ut.
     """)
-    st.info("💡 **Varför det fungerar:** Kvantforskare som James O'Shaughnessy och Tobias Carlisle har bevisat att djupt värde slår marknaden, men risken för 'värdefällor' (bolag som är billiga för att de ska gå i konkurs) är hög. Genom att kräva positivt Momentum undviker vi fallande knivar.")
 
     st.header("💸 2. Trendande Utdelning")
-    st.write("**Din Konfiguration:** Att jaga högsta möjliga direktavkastning är farligt. Appen söker högutdelare, men kräver att aktien trendar positivt, vilket indikerar att marknaden tror på bolaget.")
-    st.write("**Matematisk Sållning:**")
     st.markdown("""
-    1. Koden identifierar kolumnen 'Direktav. - Senaste'.
-    2. De 40 bolagen med absolut högst direktavkastning i % plockas ut.
-    3. Maskinen beräknar **Sammansatt Momentum** (Medelvärdet av 3m, 6m och 12m).
-    4. Högutdelarna sorteras efter Momentum. De 10 med starkast positiv trend blir din målkorg.
+    1. Koden plockar ut de 40 bolagen med absolut högst direktavkastning i %.
+    2. Högutdelarna sorteras efter Sammansatt Momentum. De 10 med starkast positiv trend blir din målkorg.
     """)
-    st.info("💡 **Varför det fungerar:** En extremt hög direktavkastning beror ofta på att aktiekursen har slaktats (marknaden prisar in en sänkt utdelning). Genom att sortera högutdelare på Momentum filtrerar Kvant-maskinen bort bolag där marknaden förväntar sig utdelningssänkningar.")
 
     st.header("⚡ 3. Sammansatt Momentum")
-    st.write("**Din Konfiguration:** Rent akademiskt momentum handlar om att 'köpa högt och sälja högre'. Denna strategi bryr sig noll om fundamental värdering, den fångar enbart flockbeteende och rå styrka.")
-    st.write("**Matematisk Sållning:**")
     st.markdown("""
-    1. Koden hämtar tre specifika tidsfönster: Kursutveckling 3 månader, 6 månader och 12 månader.
-    2. **Sammansatt Momentum** = (Utv 3m + Utv 6m + Utv 12m) / 3.
-    3. Hela börsens bolag sorteras efter detta sammansatta värde.
-    4. De 10 bolagen med allra högst snitt-momentum kapas ut rakt av.
+    1. Koden beräknar **Sammansatt Momentum** = (Utv 3m + Utv 6m + Utv 12m) / 3.
+    2. Hela börsens bolag sorteras efter detta sammansatta värde och de 10 bästa väljs rakt av.
     """)
-    st.info("💡 **Varför det fungerar:** Momentum är den mest robusta anomalin på finansmarknaden, bekräftad av Eugene Fama och Kenneth French. Vinnare tenderar att fortsätta vinna under 3-12 månader eftersom investerare är flockdjur och information tar tid att prissättas fullt ut i marknaden.")
 
 # --- SIDA 6, 7, 8: STRATEGIKALKYLATORERNA ---
 elif "Strategi" in meny_val:
@@ -472,16 +497,8 @@ elif meny_val == "⚖️ Ombalansering":
         st.dataframe(st.session_state['mal_portfolj'], use_container_width=True)
         
     if st.button("⚡ Beräkna ombalansering", type="primary"):
-        df_bef = pd.DataFrame(st.session_state[f'bef_portfolj_{vald_strat}']).dropna(subset=['Ticker'])
-        df_bef = df_bef[df_bef['Ticker'].astype(str).str.strip() != '']
-        df_mal = pd.DataFrame(st.session_state['mal_portfolj']).dropna(subset=['Ticker'])
-        df_mal = df_mal[df_mal['Ticker'].astype(str).str.strip() != '']
-        
-        df_bef['Ticker'] = df_bef['Ticker'].astype(str).str.upper().str.strip()
-        df_mal['Ticker'] = df_mal['Ticker'].astype(str).str.upper().str.strip()
-        df_bef['Antal'] = pd.to_numeric(df_bef['Antal'], errors='coerce').fillna(0)
-        df_bef['Kurs'] = pd.to_numeric(df_bef['Kurs'], errors='coerce').fillna(0)
-        df_mal['Kurs'] = pd.to_numeric(df_mal['Kurs'], errors='coerce').fillna(0)
+        df_bef = pd.DataFrame(st.session_state[f'bef_portfolj_{vald_strat}'])
+        df_mal = pd.DataFrame(st.session_state['mal_portfolj'])
         
         nuvarande_aktie_varde = (df_bef['Antal'] * df_bef['Kurs']).sum() if not df_bef.empty else 0
         totalt_portfolj_varde = nuvarande_aktie_varde + kassa
