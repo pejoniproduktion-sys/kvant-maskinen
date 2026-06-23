@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v4.2", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v4.3", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -115,26 +115,24 @@ for s in strategier:
     if f'bef_portfolj_{s}' not in st.session_state:
         st.session_state[f'bef_portfolj_{s}'] = ladda_innehav_gspread(s)
     
-    # KRAFTFULL STRIPPNING & FORMATERING FÖR ATT ELIMINERA ALLA FELKÄLLOR
+    # --- KRAFTFULL STRIPPNING FÖR ATT ELIMINERA FELKÄLLOR ---
     df = st.session_state[f'bef_portfolj_{s}']
     if isinstance(df, pd.DataFrame):
-        # Fixa skiftlagsfel på kolumner (t.ex. 'antal' -> 'Antal')
         rename_map = {c: c.capitalize().strip() for c in df.columns if c.lower().strip() in ['bolagsnamn', 'ticker', 'antal', 'kurs']}
         df = df.rename(columns=rename_map)
         
-        # Garantera att alla baskolumner existerar
         for col in ["Bolagsnamn", "Ticker", "Antal", "Kurs"]:
             if col not in df.columns:
                 df[col] = 0 if col in ["Antal", "Kurs"] else ""
         
-        # Säkerställ strikta datatyper
         df['Ticker'] = df['Ticker'].astype(str).str.upper().str.strip()
         df['Bolagsnamn'] = df['Bolagsnamn'].astype(str).str.strip()
-        df['Antal'] = pd.to_numeric(df['Antal'], errors='coerce').fillna(0).astype(int)
-        df['Kurs'] = pd.to_numeric(df['Kurs'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0.0).astype(float)
         
-        # Filtrera bort eventuella skräprader utan ticker
-        df = df[df['Ticker'] != '']
+        # Tar bort eventuella mellanslag i siffror och fixar decimaler
+        df['Antal'] = pd.to_numeric(df['Antal'].astype(str).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0).astype(int)
+        df['Kurs'] = pd.to_numeric(df['Kurs'].astype(str).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0.0).astype(float)
+        
+        df = df[~df['Ticker'].isin(['', 'NAN', 'NaN', 'nan', 'None'])]
         st.session_state[f'bef_portfolj_{s}'] = df.reset_index(drop=True)
     else:
         st.session_state[f'bef_portfolj_{s}'] = pd.DataFrame(columns=["Bolagsnamn", "Ticker", "Antal", "Kurs"])
@@ -252,8 +250,11 @@ elif meny_val == "🧠 Portföljanalys & Råd":
     
     varden = {}
     total_nu = 0.0
+    har_nagra_aktier = False
+    
     for s in strategier:
         df = st.session_state[f'bef_portfolj_{s}']
+        if not df.empty: har_nagra_aktier = True
         summa = (df['Antal'] * df['Kurs']).sum()
         varden[s] = float(summa)
         total_nu += float(summa)
@@ -300,6 +301,9 @@ elif meny_val == "🧠 Portföljanalys & Råd":
             c1.metric("Din Utveckling vs Index (Alfa)", f"{alfa:+.2f} procentenheter")
             if alfa > 0: c2.success("Fantastiskt jobbat! Din Kvant-maskin slår marknaden.")
             else: c2.warning("Du underpresterar just nu mot index. Kvantstrategier kräver tålamod.")
+            
+    elif har_nagra_aktier:
+        st.warning("⚠️ **Aktier hittades, men det totala värdet är 0 kr!** \n\nAI:n kan se att du har aktier i tabellerna, men när den försöker räkna ut värdet (Antal × Kurs) blir det noll. Gå till fliken 'Min Portfölj' och dubbelkolla att du har fyllt i både **Antal** och **Kurs** (större än noll) så analysen kan starta.")
     else:
         st.info("Inga innehav registrerades i analysmotorn. Lägg in dina rader under 'Min Portfölj' för att starta analysen.")
 
@@ -356,8 +360,11 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
     
     varden = {}
     total_nu = 0.0
+    har_nagra_aktier = False
+    
     for s in strategier:
         df = st.session_state[f'bef_portfolj_{s}']
+        if not df.empty: har_nagra_aktier = True
         summa = (df['Antal'] * df['Kurs']).sum()
         varden[s] = float(summa)
         total_nu += float(summa)
@@ -380,6 +387,9 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
             st.markdown(f"**⚡ Momentum:** Nuv: **{nu_vikter['Momentum']*100:.1f}%** ➔ Mål: **{mal_vikter['Momentum']*100:.0f}%**")
             st.progress(min(float(nu_vikter['Momentum']), 1.0), text="Din reella vikt")
             st.progress(float(mal_vikter['Momentum']), text="Optimal målvikt")
+    elif har_nagra_aktier:
+        st.warning("⚠️ **Aktier hittades, men det beräknade värdet är 0 kr.** Gå till 'Min Portfölj' och säkerställ att du har skrivit in både Antal och Kurs.")
+        st.write(f"**Målvikt just nu:** Value: {mal_vikter['Value']*100:.0f}% | Utdelning: {mal_vikter['Utdelning']*100:.0f}% | Momentum: {mal_vikter['Momentum']*100:.0f}%")
     else:
         st.info("⚠️ Lägg in dina aktiva aktier under 'Min Portfölj' för att rita upp dina reella jämförelse-mätare här.")
         st.write(f"**Målvikt just nu:** Value: {mal_vikter['Value']*100:.0f}% | Utdelning: {mal_vikter['Utdelning']*100:.0f}% | Momentum: {mal_vikter['Momentum']*100:.0f}%")
