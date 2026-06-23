@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. INSTÄLLNINGAR & GOOGLE CONNECTIONS
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v4.0", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v4.1", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -202,12 +202,11 @@ if meny_val == "📊 Översikt & Historik":
         st.dataframe(hist_df.rename(columns={'datum': 'Datum', 'varde_value': 'Value (SEK)', 'varde_utdelning': 'Utdelning (SEK)', 'varde_momentum': 'Momentum (SEK)', 'portfolj_varde': 'Total Portfölj (SEK)', 'omx_index': 'OMXSPI Index'}), use_container_width=True)
     else: st.warning("Kalkylarket är tomt.")
 
-# --- SIDA 2: PORTFÖLJANALYS & RÅDGIVARE (NY!) ---
+# --- SIDA 2: PORTFÖLJANALYS & RÅDGIVARE ---
 elif meny_val == "🧠 Portföljanalys & Råd":
     st.title("🧠 Portföljanalys & AI-Rådgivare")
     st.write("Verktyget läser av din *befintliga portfölj live* från kalkylarket, jämför din nuvarande balans mot den statistiskt optimala viktningen för årets månad, och utvärderar din överavkastning (Alfa).")
     
-    # 1. Läs av aktuella värden direkt från befintlig portfölj-data
     varden = {}
     total_nu = 0
     for s in strategier:
@@ -246,7 +245,6 @@ elif meny_val == "🧠 Portföljanalys & Råd":
             if diff > 5: st.warning(f"📉 **Sänk {bd['Strategi']}:** Du har en kraftig övervikt. Överväg att skala ner med ca **{abs(kr_diff):,.0f} kr** vid nästa ombalansering.")
             elif diff < -5: st.info(f"📈 **Öka {bd['Strategi']}:** Du är underviktad gentemot målvikt. Överväg att tillföra ca **{kr_diff:,.0f} kr**.")
         
-        # Alfa-beräkning från historiken
         hist_df = ladda_historik_gspread()
         if len(hist_df) >= 2:
             st.markdown("---")
@@ -297,7 +295,7 @@ elif meny_val == "💼 Min Portfölj":
         if st.button(f"💾 Spara {vald}-portföljen permanent"):
             if spara_innehav_gspread(st.session_state[f'bef_portfolj_{vald}'], vald): st.success("Sparat i molnet!")
 
-# --- SIDA 4: SÄSONGSMÖNSTER & VIKTNING (UTÖKAD) ---
+# --- SIDA 4: SÄSONGSMÖNSTER & VIKTNING ---
 elif meny_val == "📅 Säsongsmönster & Viktning":
     st.title("📅 Säsongsmönster & Dynamisk Viktning")
     st.markdown("Statistiska kalendareffekter och makrocykler påverkar kraftigt vilka kvantfaktorer som fungerar bäst. Genom dynamisk över/undervikt skapar du en kant mot marknaden.")
@@ -308,13 +306,43 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
 
     st.subheader(f"📍 Analys för {manad_namn}")
     
+    # 1. Hämta rekommenderade vikter
     mal_vikter = hamta_malviktning(nuvarande_manad)
-    st.write(f"**Rekommenderad portföljbalans just nu:** Value: {mal_vikter['Value']*100:.0f}% | Utdelning: {mal_vikter['Utdelning']*100:.0f}% | Momentum: {mal_vikter['Momentum']*100:.0f}%")
-    st.progress(mal_vikter['Value'], text="Trending Value")
-    st.progress(mal_vikter['Utdelning'], text="Trendande Utdelning")
-    st.progress(mal_vikter['Momentum'], text="Sammansatt Momentum")
+    
+    # 2. Hämta nuvarande vikter från portföljen
+    varden = {}
+    total_nu = 0
+    for s in strategier:
+        df = st.session_state[f'bef_portfolj_{s}']
+        if not df.empty and 'Antal' in df.columns and 'Kurs' in df.columns:
+            summa = (pd.to_numeric(df['Antal'], errors='coerce').fillna(0) * pd.to_numeric(df['Kurs'], errors='coerce').fillna(0)).sum()
+            varden[s] = summa
+            total_nu += summa
+        else: varden[s] = 0
+    nu_vikter = {s: (varden[s]/total_nu if total_nu > 0 else 0) for s in strategier}
+
+    st.write("📊 **Jämförelse: Din Nuvarande Portfölj vs. Målvikt**")
+    
+    if total_nu > 0:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown(f"**📈 Value:** Nuv: **{nu_vikter['Value']*100:.1f}%** ➔ Mål: **{mal_vikter['Value']*100:.0f}%**")
+            st.progress(min(nu_vikter['Value'], 1.0), text="Din vikt (Value)")
+            st.progress(mal_vikter['Value'], text="Målvikt (Value)")
+        with c2:
+            st.markdown(f"**💸 Utdelning:** Nuv: **{nu_vikter['Utdelning']*100:.1f}%** ➔ Mål: **{mal_vikter['Utdelning']*100:.0f}%**")
+            st.progress(min(nu_vikter['Utdelning'], 1.0), text="Din vikt (Utdelning)")
+            st.progress(mal_vikter['Utdelning'], text="Målvikt (Utdelning)")
+        with c3:
+            st.markdown(f"**⚡ Momentum:** Nuv: **{nu_vikter['Momentum']*100:.1f}%** ➔ Mål: **{mal_vikter['Momentum']*100:.0f}%**")
+            st.progress(min(nu_vikter['Momentum'], 1.0), text="Din vikt (Momentum)")
+            st.progress(mal_vikter['Momentum'], text="Målvikt (Momentum)")
+    else:
+        st.info("⚠️ Lägg in dina aktier under 'Min Portfölj' för att se din nuvarande balans här.")
+        st.write(f"**Rekommenderad portföljbalans just nu:** Value: {mal_vikter['Value']*100:.0f}% | Utdelning: {mal_vikter['Utdelning']*100:.0f}% | Momentum: {mal_vikter['Momentum']*100:.0f}%")
 
     st.markdown("---")
+    
     if nuvarande_manad in [11, 12, 1]:
         st.success("🟢 **Fokus: Värdestrategi (Value)**\n\nDu befinner dig i bästa möjliga miljö för Värdebolag. Nedpressade bolag säljs av fondförvaltare i skatteplaneringssyfte innan nyår (Tax-loss harvesting). I januari köps dessa tillbaka vilket skapar kraftiga studsar uppåt (Januarieffekten).")
         if nuvarande_manad in [12, 1]:
@@ -336,7 +364,7 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
     }
     st.table(pd.DataFrame(data_sasong))
 
-# --- SIDA 5: OM STRATEGIERNA (NY!) ---
+# --- SIDA 5: OM STRATEGIERNA ---
 elif meny_val == "📖 Om Kvantstrategierna":
     st.title("📖 Dokumentation av Kvantstrategierna")
     st.markdown("""
