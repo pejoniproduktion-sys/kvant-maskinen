@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v4.3", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v4.4", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -115,7 +115,6 @@ for s in strategier:
     if f'bef_portfolj_{s}' not in st.session_state:
         st.session_state[f'bef_portfolj_{s}'] = ladda_innehav_gspread(s)
     
-    # --- KRAFTFULL STRIPPNING FÖR ATT ELIMINERA FELKÄLLOR ---
     df = st.session_state[f'bef_portfolj_{s}']
     if isinstance(df, pd.DataFrame):
         rename_map = {c: c.capitalize().strip() for c in df.columns if c.lower().strip() in ['bolagsnamn', 'ticker', 'antal', 'kurs']}
@@ -127,8 +126,6 @@ for s in strategier:
         
         df['Ticker'] = df['Ticker'].astype(str).str.upper().str.strip()
         df['Bolagsnamn'] = df['Bolagsnamn'].astype(str).str.strip()
-        
-        # Tar bort eventuella mellanslag i siffror och fixar decimaler
         df['Antal'] = pd.to_numeric(df['Antal'].astype(str).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0).astype(int)
         df['Kurs'] = pd.to_numeric(df['Kurs'].astype(str).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0.0).astype(float)
         
@@ -303,7 +300,7 @@ elif meny_val == "🧠 Portföljanalys & Råd":
             else: c2.warning("Du underpresterar just nu mot index. Kvantstrategier kräver tålamod.")
             
     elif har_nagra_aktier:
-        st.warning("⚠️ **Aktier hittades, men det totala värdet är 0 kr!** \n\nAI:n kan se att du har aktier i tabellerna, men när den försöker räkna ut värdet (Antal × Kurs) blir det noll. Gå till fliken 'Min Portfölj' och dubbelkolla att du har fyllt i både **Antal** och **Kurs** (större än noll) så analysen kan starta.")
+        st.warning("⚠️ **Aktier hittades, men det totala värdet är 0 kr!** \n\nGå till fliken 'Min Portfölj' och tryck på knappen **🌐 Hämta Live-kurser (Yahoo)** för att automatiskt fylla i priserna.")
     else:
         st.info("Inga innehav registrerades i analysmotorn. Lägg in dina rader under 'Min Portfölj' för att starta analysen.")
 
@@ -317,7 +314,7 @@ elif meny_val == "💼 Min Portfölj":
     with st.expander("➕ Lägg till eller ändra en aktie manuellt"):
         with st.form("lagg_till_form"):
             col_namn, col_tick = st.text_input("Bolagsnamn"), st.text_input("Ticker")
-            col_antal, col_kurs = st.number_input("Antal", min_value=0, step=1), st.number_input("Kurs", min_value=0.0, step=0.1)
+            col_antal, col_kurs = st.number_input("Antal", min_value=0, step=1), st.number_input("Kurs (Kan lämnas på 0)", min_value=0.0, step=0.1)
             if st.form_submit_button("Spara i tabell"):
                 df = st.session_state[f'bef_portfolj_{vald}'].copy()
                 new_row = {"Bolagsnamn": col_namn.strip(), "Ticker": col_tick.upper().strip(), "Antal": int(col_antal), "Kurs": float(col_kurs)}
@@ -329,9 +326,33 @@ elif meny_val == "💼 Min Portfölj":
                 
                 st.session_state[f'bef_portfolj_{vald}'] = df
                 st.rerun()
-    c1, c2 = st.columns(2)
+                
+    st.markdown("---")
+    c1, c2, c3 = st.columns(3)
     with c1:
-        if uppladdad_fil and st.button(f"🔄 Hämta dagsaktuella priser"):
+        if st.button("🌐 Hämta Live-kurser (Yahoo)", type="primary"):
+            with st.spinner("Hämtar från nätet..."):
+                temp_bef = st.session_state[f'bef_portfolj_{vald}'].copy()
+                for idx, row in temp_bef.iterrows():
+                    t = str(row['Ticker']).upper().replace(" SEK", "").strip()
+                    if not t: continue
+                    # Rätta till svenska tickers för Yahoo (t.ex. SSAB B -> SSAB-B.ST)
+                    t = t.replace(" ", "-")
+                    yf_ticker = t if "." in t else f"{t}.ST"
+                    
+                    try:
+                        aktie = yf.Ticker(yf_ticker)
+                        hist = aktie.history(period="1d")
+                        if not hist.empty:
+                            temp_bef.at[idx, 'Kurs'] = round(float(hist['Close'].iloc[-1]), 2)
+                    except:
+                        pass # Ignorera fel och gå till nästa
+                        
+                st.session_state[f'bef_portfolj_{vald}'] = temp_bef
+                st.success("Live-kurser hämtade!")
+                st.rerun()
+    with c2:
+        if uppladdad_fil and st.button(f"🔄 Hämta från Börsdata-fil"):
             df_bd, k_namn, k_tick, k_kurs = ladda_och_tvatta_basdata(uppladdad_fil)
             kurs_dict = dict(zip(df_bd[k_tick].astype(str).str.upper().str.strip(), df_bd[k_kurs]))
             temp_bef = st.session_state[f'bef_portfolj_{vald}'].copy()
@@ -339,10 +360,10 @@ elif meny_val == "💼 Min Portfölj":
                 t = str(row['Ticker']).upper().strip()
                 if t in kurs_dict: temp_bef.at[idx, 'Kurs'] = float(kurs_dict[t])
             st.session_state[f'bef_portfolj_{vald}'] = temp_bef
-            st.success("Kurserna har uppdaterats!")
+            st.success("Kurserna har uppdaterats från fil!")
             st.rerun()
-    with c2:
-        if st.button(f"💾 Spara {vald}-portföljen permanent"):
+    with c3:
+        if st.button(f"💾 Spara {vald}-portföljen", use_container_width=True):
             if spara_innehav_gspread(st.session_state[f'bef_portfolj_{vald}'], vald): 
                 st.success("Sparat i molnet!")
 
@@ -388,7 +409,7 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
             st.progress(min(float(nu_vikter['Momentum']), 1.0), text="Din reella vikt")
             st.progress(float(mal_vikter['Momentum']), text="Optimal målvikt")
     elif har_nagra_aktier:
-        st.warning("⚠️ **Aktier hittades, men det beräknade värdet är 0 kr.** Gå till 'Min Portfölj' och säkerställ att du har skrivit in både Antal och Kurs.")
+        st.warning("⚠️ **Aktier hittades, men det beräknade värdet är 0 kr.** Gå till 'Min Portfölj' och klicka på 'Hämta Live-kurser'.")
         st.write(f"**Målvikt just nu:** Value: {mal_vikter['Value']*100:.0f}% | Utdelning: {mal_vikter['Utdelning']*100:.0f}% | Momentum: {mal_vikter['Momentum']*100:.0f}%")
     else:
         st.info("⚠️ Lägg in dina aktiva aktier under 'Min Portfölj' för att rita upp dina reella jämförelse-mätare här.")
