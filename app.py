@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v4.6", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v4.7", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -32,7 +32,8 @@ def ladda_historik_gspread():
             if col not in df.columns: 
                 df[col] = 0.0
             else: 
-                df[col] = pd.to_numeric(df[col].astype(str).str.replace(' ', '').str.replace(',', '.'), errors='coerce').fillna(0.0)
+                # Tvättar bort eventuella apostrofer, mellanslag och kommatecken vid laddning
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace("'", "", regex=False).str.replace(' ', '').str.replace(',', '.'), errors='coerce').fillna(0.0)
         return df.sort_values('datum').reset_index(drop=True)
     except: 
         return pd.DataFrame(columns=['datum', 'varde_value', 'varde_utdelning', 'varde_momentum', 'portfolj_varde', 'omx_index'])
@@ -54,15 +55,15 @@ def spara_historik_gspread(datum_str, v_val, v_utd, v_mom, tot, omx):
                 found_row = i + 2
                 break
         
-        # SKICKAR RENA SIFFROR (FLOATS) FÖR ATT UNDVIKA SPRÅK-BUGGAR I GOOGLE SHEETS
+        # PANSARSKYDD: Lägger till apostrof för att låsa Google Sheets formatering helt.
         if found_row:
-            worksheet.update_cell(found_row, 2, float(v_val))
-            worksheet.update_cell(found_row, 3, float(v_utd))
-            worksheet.update_cell(found_row, 4, float(v_mom))
-            worksheet.update_cell(found_row, 5, float(tot))
-            worksheet.update_cell(found_row, 6, float(omx))
+            worksheet.update_cell(found_row, 2, f"'{float(v_val):.2f}")
+            worksheet.update_cell(found_row, 3, f"'{float(v_utd):.2f}")
+            worksheet.update_cell(found_row, 4, f"'{float(v_mom):.2f}")
+            worksheet.update_cell(found_row, 5, f"'{float(tot):.2f}")
+            worksheet.update_cell(found_row, 6, f"'{float(omx):.2f}")
         else: 
-            worksheet.append_row([datum_str, float(v_val), float(v_utd), float(v_mom), float(tot), float(omx)], value_input_option='USER_ENTERED')
+            worksheet.append_row([datum_str, f"'{float(v_val):.2f}", f"'{float(v_utd):.2f}", f"'{float(v_mom):.2f}", f"'{float(tot):.2f}", f"'{float(omx):.2f}"], value_input_option='USER_ENTERED')
         return True
     except: 
         return False
@@ -106,11 +107,10 @@ def spara_innehav_gspread(df_ny, strategi):
         df_clean = df_clean[df_clean['Ticker'].astype(str).str.strip() != '']
         
         if not df_clean.empty: 
-            # SKICKAR RENA SIFFROR I STÄLLET FÖR TEXT. 
-            # Om vi skickar text med punkt/komma kan Google Sheets (beroende på land) tolka det som tusentalsavskiljare.
-            df_clean['Antal'] = df_clean['Antal'].astype(int)
-            df_clean['Kurs'] = df_clean['Kurs'].astype(float)
-            worksheet.append_rows(df_clean[["Bolagsnamn", "Ticker", "Antal", "Kurs"]].values.tolist(), value_input_option='RAW')
+            # PANSARSKYDD INNEHAV: 
+            df_clean['Antal'] = df_clean['Antal'].apply(lambda x: str(int(x)))
+            df_clean['Kurs'] = df_clean['Kurs'].apply(lambda x: f"'{float(x):.2f}")
+            worksheet.append_rows(df_clean[["Bolagsnamn", "Ticker", "Antal", "Kurs"]].values.tolist(), value_input_option='USER_ENTERED')
         return True
     except: 
         return False
@@ -135,8 +135,10 @@ for s in strategier:
         
         df['Ticker'] = df['Ticker'].astype(str).str.upper().str.strip()
         df['Bolagsnamn'] = df['Bolagsnamn'].astype(str).str.strip()
-        df['Antal'] = pd.to_numeric(df['Antal'].astype(str).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0).astype(int)
-        df['Kurs'] = pd.to_numeric(df['Kurs'].astype(str).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0.0).astype(float)
+        
+        # Säker inläsning oavsett format - raderar inledande apostrofer
+        df['Antal'] = pd.to_numeric(df['Antal'].astype(str).str.replace("'", "", regex=False).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0).astype(int)
+        df['Kurs'] = pd.to_numeric(df['Kurs'].astype(str).str.replace("'", "", regex=False).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0.0).astype(float)
         
         df = df[~df['Ticker'].isin(['', 'NAN', 'NaN', 'nan', 'None'])]
         st.session_state[f'bef_portfolj_{s}'] = df.reset_index(drop=True)
