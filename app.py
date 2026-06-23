@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. INSTÄLLNINGAR & GOOGLE CONNECTIONS
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v3.2", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v3.3", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -30,7 +30,6 @@ def ladda_historik_gspread():
         
         df['datum'] = df['datum'].astype(str)
         
-        # Säkerställ att nya strategikolumner finns i dataramen även för gamla rader
         for col in ['varde_value', 'varde_utdelning', 'varde_momentum', 'portfolj_varde', 'omx_index']:
             if col not in df.columns:
                 df[col] = 0
@@ -147,18 +146,17 @@ def ladda_och_tvatta_basdata(fil):
 # 4. SIDORNAS LOGIK
 # ==========================================
 
-# --- SIDA 1: ÖVERSIKT & HISTORIK ---
+# --- SIDA 1: ÖVERSIKT & HISTORIK (NU MED DASHBOARD) ---
 if meny_val == "📊 Översikt & Historik":
-    st.title("📊 Portföljöversikt & Evig Historik")
+    st.title("📊 Portföljöversikt & Dashboard")
     
-    with st.expander("➕ Logga värde per kvantstrategi (Beräknar totalen automatiskt)"):
+    with st.expander("➕ Logga värde per kvantstrategi"):
         with st.form("logga_varde"):
             valt_datum = st.date_input("Välj datum", datetime.now())
             
-            # Tre separata rutor för inmatning
-            v_value = st.number_input("Värde: Trending Value-portfölj (SEK)", min_value=0.0, step=1000.0)
-            v_utd = st.number_input("Utdelning: Trendande Utdelning-portfölj (SEK)", min_value=0.0, step=1000.0)
-            v_mom = st.number_input("Momentum: Sammansatt Momentum-portfölj (SEK)", min_value=0.0, step=1000.0)
+            v_value = st.number_input("Värde: Trending Value (SEK)", min_value=0.0, step=1000.0)
+            v_utd = st.number_input("Utdelning: Trendande Utdelning (SEK)", min_value=0.0, step=1000.0)
+            v_mom = st.number_input("Momentum: Sammansatt Momentum (SEK)", min_value=0.0, step=1000.0)
             
             if st.form_submit_button("Spara datapunkt"):
                 datum_str = valt_datum.strftime("%Y-%m-%d")
@@ -171,7 +169,6 @@ if meny_val == "📊 Översikt & Historik":
                         if not hist.empty:
                             omx_stangning = round(float(hist['Close'].iloc[0]), 2)
                             
-                            # Konvertera till svenska textformat med komma
                             val_str = str(round(v_value, 2)).replace('.', ',')
                             utd_str = str(round(v_utd, 2)).replace('.', ',')
                             mom_str = str(round(v_mom, 2)).replace('.', ',')
@@ -179,10 +176,10 @@ if meny_val == "📊 Översikt & Historik":
                             omx_str = str(omx_stangning).replace('.', ',')
                             
                             if spara_historik_gspread(datum_str, val_str, utd_str, mom_str, tot_str, omx_str):
-                                st.success(f"Sparat! Total portfölj beräknad till: {totalt_portfoljvarde:,.2f} SEK")
+                                st.success(f"Sparat! Total portfölj: {totalt_portfoljvarde:,.0f} SEK")
                                 st.rerun()
                         else: 
-                            st.error("Kunde inte hitta indexkurs för detta datum. Testa en närliggande vardag.")
+                            st.error("Kunde inte hitta indexkurs.")
                     except Exception as e: 
                         st.error(f"Fel: {e}")
 
@@ -190,11 +187,46 @@ if meny_val == "📊 Översikt & Historik":
         hist_df = ladda_historik_gspread()
     
     if len(hist_df) >= 1:
-        st.subheader("📈 Procentuell utveckling jämfört med OMX Stockholm PI")
         if len(hist_df) >= 2:
-            hist_df['Portfölj (%)'] = (hist_df['portfolj_varde'] / hist_df['portfolj_varde'].iloc[0]) * 100 - 100
-            hist_df['OMX Stockholm PI (%)'] = (hist_df['omx_index'] / hist_df['omx_index'].iloc[0]) * 100 - 100
-            st.line_chart(hist_df.set_index('datum')[['Portfölj (%)', 'OMX Stockholm PI (%)']])
+            st.subheader("📈 Utveckling per strategi jämfört med OMXSPI")
+            
+            # Skapa en DataFrame för den dynamiska grafen
+            kols_att_raknas = {
+                'varde_value': 'Value (%)',
+                'varde_utdelning': 'Utdelning (%)',
+                'varde_momentum': 'Momentum (%)',
+                'portfolj_varde': 'Total Portfölj (%)',
+                'omx_index': 'OMXSPI (%)'
+            }
+            
+            graf_df = hist_df[['datum']].copy()
+            
+            # Beräkna procentuell uppgång för varje specifik strategi separat
+            for org_col, ny_col in kols_att_raknas.items():
+                start_varden = hist_df[hist_df[org_col] > 0][org_col]
+                if not start_varden.empty:
+                    start_v = start_varden.iloc[0]
+                    graf_df[ny_col] = (hist_df[org_col] / start_v) * 100 - 100
+                else:
+                    graf_df[ny_col] = 0.0
+            
+            graf_df = graf_df.set_index('datum')
+            
+            # Snygga Dashboard-kort högst upp!
+            senaste_pct = graf_df.iloc[-1]
+            senaste_sek = hist_df.iloc[-1]
+            
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("💼 Total Portfölj", f"{senaste_sek['portfolj_varde']:,.0f} kr".replace(',', ' '), f"{senaste_pct['Total Portfölj (%)']:.1f} % totalt")
+            c2.metric("📈 Value", f"{senaste_sek['varde_value']:,.0f} kr".replace(',', ' '), f"{senaste_pct['Value (%)']:.1f} %")
+            c3.metric("💸 Utdelning", f"{senaste_sek['varde_utdelning']:,.0f} kr".replace(',', ' '), f"{senaste_pct['Utdelning (%)']:.1f} %")
+            c4.metric("⚡ Momentum", f"{senaste_sek['varde_momentum']:,.0f} kr".replace(',', ' '), f"{senaste_pct['Momentum (%)']:.1f} %")
+            c5.metric("📊 OMXSPI", f"{senaste_sek['omx_index']:,.0f}".replace(',', ' '), f"{senaste_pct['OMXSPI (%)']:.1f} %", delta_color="off")
+            
+            st.markdown("---")
+            
+            # Rita ut den separerade, klickbara grafen
+            st.line_chart(graf_df)
             
         st.subheader("Historisk datatabell")
         vy_df = hist_df.rename(columns={
