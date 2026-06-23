@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v4.5", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v4.6", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -37,7 +37,7 @@ def ladda_historik_gspread():
     except: 
         return pd.DataFrame(columns=['datum', 'varde_value', 'varde_utdelning', 'varde_momentum', 'portfolj_varde', 'omx_index'])
 
-def spara_historik_gspread(datum_str, v_val_str, v_utd_str, v_mom_str, tot_str, omx_str):
+def spara_historik_gspread(datum_str, v_val, v_utd, v_mom, tot, omx):
     try:
         gc = get_gspread_client()
         sh = gc.open_by_url(st.secrets["google_sheet_url"])
@@ -53,14 +53,16 @@ def spara_historik_gspread(datum_str, v_val_str, v_utd_str, v_mom_str, tot_str, 
             if row and row[0] == datum_str:
                 found_row = i + 2
                 break
+        
+        # SKICKAR RENA SIFFROR (FLOATS) FÖR ATT UNDVIKA SPRÅK-BUGGAR I GOOGLE SHEETS
         if found_row:
-            worksheet.update_cell(found_row, 2, v_val_str)
-            worksheet.update_cell(found_row, 3, v_utd_str)
-            worksheet.update_cell(found_row, 4, v_mom_str)
-            worksheet.update_cell(found_row, 5, tot_str)
-            worksheet.update_cell(found_row, 6, omx_str)
+            worksheet.update_cell(found_row, 2, float(v_val))
+            worksheet.update_cell(found_row, 3, float(v_utd))
+            worksheet.update_cell(found_row, 4, float(v_mom))
+            worksheet.update_cell(found_row, 5, float(tot))
+            worksheet.update_cell(found_row, 6, float(omx))
         else: 
-            worksheet.append_row([datum_str, v_val_str, v_utd_str, v_mom_str, tot_str, omx_str])
+            worksheet.append_row([datum_str, float(v_val), float(v_utd), float(v_mom), float(tot), float(omx)], value_input_option='USER_ENTERED')
         return True
     except: 
         return False
@@ -104,9 +106,11 @@ def spara_innehav_gspread(df_ny, strategi):
         df_clean = df_clean[df_clean['Ticker'].astype(str).str.strip() != '']
         
         if not df_clean.empty: 
-            # SVENSK FORMATERING: Byt till kommatecken innan vi skickar till Sheets
-            df_clean['Kurs'] = df_clean['Kurs'].apply(lambda x: str(float(x)).replace('.', ','))
-            worksheet.append_rows(df_clean[["Bolagsnamn", "Ticker", "Antal", "Kurs"]].values.tolist(), value_input_option='USER_ENTERED')
+            # SKICKAR RENA SIFFROR I STÄLLET FÖR TEXT. 
+            # Om vi skickar text med punkt/komma kan Google Sheets (beroende på land) tolka det som tusentalsavskiljare.
+            df_clean['Antal'] = df_clean['Antal'].astype(int)
+            df_clean['Kurs'] = df_clean['Kurs'].astype(float)
+            worksheet.append_rows(df_clean[["Bolagsnamn", "Ticker", "Antal", "Kurs"]].values.tolist(), value_input_option='RAW')
         return True
     except: 
         return False
@@ -181,7 +185,6 @@ def ladda_och_tvatta_basdata(fil):
     k_kurs = next((c for c in df.columns if 'aktiekurs' in c.lower() or ('kurs' in c.lower() and 'utveck' not in c.lower())), None)
     if not k_kurs: k_kurs = df.columns[2]
     
-    # Svensk sanering: fixa kommatecken från CSV-filer
     df[k_kurs] = pd.to_numeric(df[k_kurs].astype(str).str.replace(' ', '').str.replace(',', '.'), errors='coerce').fillna(0)
     
     k_bv = next((c for c in df.columns if 'börsvärde' in c.lower()), None)
@@ -216,8 +219,8 @@ if meny_val == "📊 Översikt & Historik":
                         omx = yf.Ticker("^OMXSPI")
                         hist = omx.history(start=valt_datum, end=valt_datum + timedelta(days=4))
                         if not hist.empty:
-                            omx_stangning = round(float(hist['Close'].iloc[0]), 2)
-                            if spara_historik_gspread(datum_str, str(round(v_value,2)).replace('.',','), str(round(v_utd,2)).replace('.',','), str(round(v_mom,2)).replace('.',','), str(round(totalt_portfoljvarde,2)).replace('.',','), str(omx_stangning).replace('.',',')):
+                            omx_stangning = float(hist['Close'].iloc[0])
+                            if spara_historik_gspread(datum_str, v_value, v_utd, v_mom, totalt_portfoljvarde, omx_stangning):
                                 st.success("Sparat!")
                                 st.rerun()
                         else: st.error("Kunde inte hitta indexkurs.")
