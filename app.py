@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v4.9", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v5.0", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -229,29 +229,36 @@ if meny_val == "📊 Översikt & Historik":
         st.subheader("📈 Utveckling jämfört med OMXSPI")
         
         if len(hist_df) >= 2:
-            tidsperiod = st.radio("⏳ Välj tidsperiod för avkastning:", ["1 Månad", "I år (YTD)", "1 År", "Total Utveckling"], index=3, horizontal=True)
+            # INTERAKTIV TIDVÄLJARE MED DAGSUTVECKLING INKLUDERAD
+            tidsperiod = st.sidebar.radio("⏳ Välj tidsperiod för instrumentpanelen:", ["Dagsutveckling", "1 Månad", "I år (YTD)", "1 År", "Total Utveckling"], index=4)
+            st.markdown(f"**Visar just nu:** `{tidsperiod}`")
             
             temp_hist = hist_df.copy()
             temp_hist['datum_dt'] = pd.to_datetime(temp_hist['datum'])
             senaste_datum = temp_hist['datum_dt'].iloc[-1]
             senaste_rad = temp_hist.iloc[-1]
             
-            if tidsperiod == "1 Månad":
-                start_date = senaste_datum - pd.DateOffset(days=30)
-            elif tidsperiod == "I år (YTD)":
-                start_date = pd.to_datetime(f"{senaste_datum.year}-01-01")
-            elif tidsperiod == "1 År":
-                start_date = senaste_datum - pd.DateOffset(days=365)
+            # Beräkningslogik per tidsperiod
+            if tidsperiod == "Dagsutveckling":
+                if len(temp_hist) >= 2:
+                    start_row = temp_hist.iloc[-2]
+                else:
+                    start_row = temp_hist.iloc[0]
             else:
-                start_date = temp_hist['datum_dt'].iloc[0]
+                if tidsperiod == "1 Månad":
+                    start_date = senaste_datum - pd.DateOffset(days=30)
+                elif tidsperiod == "I år (YTD)":
+                    start_date = pd.to_datetime(f"{senaste_datum.year}-01-01")
+                elif tidsperiod == "1 År":
+                    start_date = senaste_datum - pd.DateOffset(days=365)
+                else:
+                    start_date = temp_hist['datum_dt'].iloc[0]
 
-            past_data = temp_hist[temp_hist['datum_dt'] <= start_date]
-            if past_data.empty:
-                start_row = temp_hist.iloc[0]
-                if tidsperiod != "Total Utveckling":
-                    st.info(f"Kunde inte hitta data tillräckligt långt bak för vald period. Visar avkastning från första insättningen ({start_row['datum']}).")
-            else:
-                start_row = past_data.iloc[-1]
+                past_data = temp_hist[temp_hist['datum_dt'] <= start_date]
+                if past_data.empty:
+                    start_row = temp_hist.iloc[0]
+                else:
+                    start_row = past_data.iloc[-1]
 
             def calc_ret(nu, da):
                 if float(da) > 0:
@@ -273,6 +280,7 @@ if meny_val == "📊 Översikt & Historik":
             
             st.markdown("---")
             
+            # Grafen visar alltid det totala historiska förloppet
             kols = {'varde_value': 'Value (%)', 'varde_utdelning': 'Utdelning (%)', 'varde_momentum': 'Momentum (%)', 'portfolj_varde': 'Total Portfölj (%)', 'omx_index': 'OMXSPI (%)'}
             graf_df = hist_df[['datum']].copy()
             for org_col, ny_col in kols.items():
@@ -401,7 +409,7 @@ elif meny_val == "💼 Min Portfölj":
             temp_bef = st.session_state[f'bef_portfolj_{vald}'].copy()
             for idx, row in temp_bef.iterrows():
                 t = str(row['Ticker']).upper().strip()
-                if t in kurs_dict: temp_bef.at[idx, 'Kurs'] = float(kurs_dict[t])
+                if t in cursor_dict: temp_bef.at[idx, 'Kurs'] = float(kurs_dict[t])
             st.session_state[f'bef_portfolj_{vald}'] = temp_bef
             st.success("Kurserna har uppdaterats från fil!")
             st.rerun()
@@ -460,7 +468,7 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
 
     st.markdown("---")
     if nuvarande_manad in [11, 12, 1]:
-        st.success("🟢 **Fokus: Värdestrategi (Value)**\n\nDu befinner dig i bästa möjliga miljö för Värdebolag. Nedpressade bolag säljs av fondförvaltare i skatteplaneringssyfte innan nyår (Tax-loss harvesting). I januari köps dessa tillbaka vilket skapar kraftiga studsar uppåt (Januarieffekten).")
+        st.success("🟢 **Fokus: Värdestrategi (Value)**\n\nDu befinner dig i bästa möjliga miljö för Värdebolag. Nedpressade bolag säljs av fondförvaltare i skatteplaneringssyfte innan nyår (Tax-loss harvesting). In januari köps dessa tillbaka vilket skapar kraftiga studsar uppåt (Januarieffekten).")
         if nuvarande_manad in [12, 1]:
             st.error("🔴 **Varning: Momentum Crash**\n\nEftersom förlorarna (Värde) studsar i januari, sker det motsatta för årets stora vinnare (Momentum). Investerare plockar hem vinsten. Januari är årets absolut sämsta månad för en renodlad Momentum-strategi.")
     elif nuvarande_manad in [2, 3, 4]:
