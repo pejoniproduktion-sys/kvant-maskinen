@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v4.7", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v4.8", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -32,7 +32,6 @@ def ladda_historik_gspread():
             if col not in df.columns: 
                 df[col] = 0.0
             else: 
-                # Tvättar bort eventuella apostrofer, mellanslag och kommatecken vid laddning
                 df[col] = pd.to_numeric(df[col].astype(str).str.replace("'", "", regex=False).str.replace(' ', '').str.replace(',', '.'), errors='coerce').fillna(0.0)
         return df.sort_values('datum').reset_index(drop=True)
     except: 
@@ -55,7 +54,6 @@ def spara_historik_gspread(datum_str, v_val, v_utd, v_mom, tot, omx):
                 found_row = i + 2
                 break
         
-        # PANSARSKYDD: Lägger till apostrof för att låsa Google Sheets formatering helt.
         if found_row:
             worksheet.update_cell(found_row, 2, f"'{float(v_val):.2f}")
             worksheet.update_cell(found_row, 3, f"'{float(v_utd):.2f}")
@@ -107,7 +105,6 @@ def spara_innehav_gspread(df_ny, strategi):
         df_clean = df_clean[df_clean['Ticker'].astype(str).str.strip() != '']
         
         if not df_clean.empty: 
-            # PANSARSKYDD INNEHAV: 
             df_clean['Antal'] = df_clean['Antal'].apply(lambda x: str(int(x)))
             df_clean['Kurs'] = df_clean['Kurs'].apply(lambda x: f"'{float(x):.2f}")
             worksheet.append_rows(df_clean[["Bolagsnamn", "Ticker", "Antal", "Kurs"]].values.tolist(), value_input_option='USER_ENTERED')
@@ -135,8 +132,6 @@ for s in strategier:
         
         df['Ticker'] = df['Ticker'].astype(str).str.upper().str.strip()
         df['Bolagsnamn'] = df['Bolagsnamn'].astype(str).str.strip()
-        
-        # Säker inläsning oavsett format - raderar inledande apostrofer
         df['Antal'] = pd.to_numeric(df['Antal'].astype(str).str.replace("'", "", regex=False).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0).astype(int)
         df['Kurs'] = pd.to_numeric(df['Kurs'].astype(str).str.replace("'", "", regex=False).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0.0).astype(float)
         
@@ -249,6 +244,58 @@ if meny_val == "📊 Översikt & Historik":
             c5.metric("📊 OMXSPI", f"{senaste_sek['omx_index']:,.0f}".replace(',', ' '), f"{senaste_pct['OMXSPI (%)']:.1f} %", delta_color="off")
             st.markdown("---")
             st.line_chart(graf_df)
+
+            # --- NY SEKTION: AVKASTNING PER PERIOD ---
+            st.subheader("⏱️ Avkastning per period")
+            
+            temp_hist = hist_df.copy()
+            temp_hist['datum_dt'] = pd.to_datetime(temp_hist['datum'])
+            senaste_datum = temp_hist['datum_dt'].iloc[-1]
+            senaste_port = temp_hist['portfolj_varde'].iloc[-1]
+            senaste_omx = temp_hist['omx_index'].iloc[-1]
+            
+            def calc_period_return(df, days_back):
+                start_date = senaste_datum - pd.DateOffset(days=days_back)
+                past_data = df[df['datum_dt'] <= start_date]
+                
+                if past_data.empty:
+                    start_port = df['portfolj_varde'].iloc[0]
+                    start_omx = df['omx_index'].iloc[0]
+                else:
+                    start_port = past_data['portfolj_varde'].iloc[-1]
+                    start_omx = past_data['omx_index'].iloc[-1]
+                    
+                p_ret = ((senaste_port / start_port) - 1) * 100 if start_port > 0 else 0
+                o_ret = ((senaste_omx / start_omx) - 1) * 100 if start_omx > 0 else 0
+                return p_ret, o_ret
+            
+            # YTD (I år)
+            start_ytd = pd.to_datetime(f"{senaste_datum.year}-01-01")
+            past_ytd = temp_hist[temp_hist['datum_dt'] <= start_ytd]
+            if past_ytd.empty:
+                start_port_ytd = temp_hist['portfolj_varde'].iloc[0]
+                start_omx_ytd = temp_hist['omx_index'].iloc[0]
+            else:
+                start_port_ytd = past_ytd['portfolj_varde'].iloc[-1]
+                start_omx_ytd = past_ytd['omx_index'].iloc[-1]
+                
+            port_ytd = ((senaste_port / start_port_ytd) - 1) * 100 if start_port_ytd > 0 else 0
+            omx_ytd = ((senaste_omx / start_omx_ytd) - 1) * 100 if start_omx_ytd > 0 else 0
+            
+            port_1m, omx_1m = calc_period_return(temp_hist, 30)
+            port_1y, omx_1y = calc_period_return(temp_hist, 365)
+            port_tot = senaste_pct['Total Portfölj (%)']
+            omx_tot = senaste_pct['OMXSPI (%)']
+            
+            perf_data = [
+                {"Period": "Senaste månaden (30 dgr)", "Din Portfölj": f"{port_1m:+.2f} %", "OMXSPI": f"{omx_1m:+.2f} %", "Överavkastning (Alfa)": f"{port_1m - omx_1m:+.2f} %"},
+                {"Period": "I år (YTD)", "Din Portfölj": f"{port_ytd:+.2f} %", "OMXSPI": f"{omx_ytd:+.2f} %", "Överavkastning (Alfa)": f"{port_ytd - omx_ytd:+.2f} %"},
+                {"Period": "Senaste året (365 dgr)", "Din Portfölj": f"{port_1y:+.2f} %", "OMXSPI": f"{omx_1y:+.2f} %", "Överavkastning (Alfa)": f"{port_1y - omx_1y:+.2f} %"},
+                {"Period": "Total Utveckling", "Din Portfölj": f"{port_tot:+.2f} %", "OMXSPI": f"{omx_tot:+.2f} %", "Överavkastning (Alfa)": f"{port_tot - omx_tot:+.2f} %"}
+            ]
+            
+            st.table(pd.DataFrame(perf_data).set_index("Period"))
+            
         st.subheader("Historisk datatabell")
         st.dataframe(hist_df.rename(columns={'datum': 'Datum', 'varde_value': 'Value (SEK)', 'varde_utdelning': 'Utdelning (SEK)', 'varde_momentum': 'Momentum (SEK)', 'portfolj_varde': 'Total Portfölj (SEK)', 'omx_index': 'OMXSPI Index'}), use_container_width=True)
     else: st.warning("Kalkylarket är tomt.")
