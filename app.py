@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v4.8", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v4.9", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -225,76 +225,61 @@ if meny_val == "📊 Översikt & Historik":
 
     hist_df = ladda_historik_gspread()
     if len(hist_df) >= 1:
+        st.markdown("---")
+        st.subheader("📈 Utveckling jämfört med OMXSPI")
+        
         if len(hist_df) >= 2:
-            st.subheader("📈 Utveckling jämfört med OMXSPI")
+            tidsperiod = st.radio("⏳ Välj tidsperiod för avkastning:", ["1 Månad", "I år (YTD)", "1 År", "Total Utveckling"], index=3, horizontal=True)
+            
+            temp_hist = hist_df.copy()
+            temp_hist['datum_dt'] = pd.to_datetime(temp_hist['datum'])
+            senaste_datum = temp_hist['datum_dt'].iloc[-1]
+            senaste_rad = temp_hist.iloc[-1]
+            
+            if tidsperiod == "1 Månad":
+                start_date = senaste_datum - pd.DateOffset(days=30)
+            elif tidsperiod == "I år (YTD)":
+                start_date = pd.to_datetime(f"{senaste_datum.year}-01-01")
+            elif tidsperiod == "1 År":
+                start_date = senaste_datum - pd.DateOffset(days=365)
+            else:
+                start_date = temp_hist['datum_dt'].iloc[0]
+
+            past_data = temp_hist[temp_hist['datum_dt'] <= start_date]
+            if past_data.empty:
+                start_row = temp_hist.iloc[0]
+                if tidsperiod != "Total Utveckling":
+                    st.info(f"Kunde inte hitta data tillräckligt långt bak för vald period. Visar avkastning från första insättningen ({start_row['datum']}).")
+            else:
+                start_row = past_data.iloc[-1]
+
+            def calc_ret(nu, da):
+                if float(da) > 0:
+                    return ((float(nu) / float(da)) - 1) * 100
+                return 0.0
+
+            ret_tot = calc_ret(senaste_rad['portfolj_varde'], start_row['portfolj_varde'])
+            ret_val = calc_ret(senaste_rad['varde_value'], start_row['varde_value'])
+            ret_utd = calc_ret(senaste_rad['varde_utdelning'], start_row['varde_utdelning'])
+            ret_mom = calc_ret(senaste_rad['varde_momentum'], start_row['varde_momentum'])
+            ret_omx = calc_ret(senaste_rad['omx_index'], start_row['omx_index'])
+            
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("💼 Total Portfölj", f"{senaste_rad['portfolj_varde']:,.0f} kr".replace(',', ' '), f"{ret_tot:+.1f} %")
+            c2.metric("📈 Value", f"{senaste_rad['varde_value']:,.0f} kr".replace(',', ' '), f"{ret_val:+.1f} %")
+            c3.metric("💸 Utdelning", f"{senaste_rad['varde_utdelning']:,.0f} kr".replace(',', ' '), f"{ret_utd:+.1f} %")
+            c4.metric("⚡ Momentum", f"{senaste_rad['varde_momentum']:,.0f} kr".replace(',', ' '), f"{ret_mom:+.1f} %")
+            c5.metric("📊 OMXSPI", f"{senaste_rad['omx_index']:,.0f}".replace(',', ' '), f"{ret_omx:+.1f} %")
+            
+            st.markdown("---")
+            
             kols = {'varde_value': 'Value (%)', 'varde_utdelning': 'Utdelning (%)', 'varde_momentum': 'Momentum (%)', 'portfolj_varde': 'Total Portfölj (%)', 'omx_index': 'OMXSPI (%)'}
             graf_df = hist_df[['datum']].copy()
             for org_col, ny_col in kols.items():
                 start_varden = hist_df[hist_df[org_col] > 0][org_col]
                 graf_df[ny_col] = ((hist_df[org_col] / start_varden.iloc[0]) * 100 - 100) if not start_varden.empty else 0.0
             graf_df = graf_df.set_index('datum')
-            
-            senaste_pct, senaste_sek = graf_df.iloc[-1], hist_df.iloc[-1]
-            
-            c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("💼 Total Portfölj", f"{senaste_sek['portfolj_varde']:,.0f} kr".replace(',', ' '), f"{senaste_pct['Total Portfölj (%)']:.1f} %")
-            c2.metric("📈 Value", f"{senaste_sek['varde_value']:,.0f} kr".replace(',', ' '), f"{senaste_pct['Value (%)']:.1f} %")
-            c3.metric("💸 Utdelning", f"{senaste_sek['varde_utdelning']:,.0f} kr".replace(',', ' '), f"{senaste_pct['Utdelning (%)']:.1f} %")
-            c4.metric("⚡ Momentum", f"{senaste_sek['varde_momentum']:,.0f} kr".replace(',', ' '), f"{senaste_pct['Momentum (%)']:.1f} %")
-            c5.metric("📊 OMXSPI", f"{senaste_sek['omx_index']:,.0f}".replace(',', ' '), f"{senaste_pct['OMXSPI (%)']:.1f} %", delta_color="off")
-            st.markdown("---")
             st.line_chart(graf_df)
-
-            # --- NY SEKTION: AVKASTNING PER PERIOD ---
-            st.subheader("⏱️ Avkastning per period")
-            
-            temp_hist = hist_df.copy()
-            temp_hist['datum_dt'] = pd.to_datetime(temp_hist['datum'])
-            senaste_datum = temp_hist['datum_dt'].iloc[-1]
-            senaste_port = temp_hist['portfolj_varde'].iloc[-1]
-            senaste_omx = temp_hist['omx_index'].iloc[-1]
-            
-            def calc_period_return(df, days_back):
-                start_date = senaste_datum - pd.DateOffset(days=days_back)
-                past_data = df[df['datum_dt'] <= start_date]
-                
-                if past_data.empty:
-                    start_port = df['portfolj_varde'].iloc[0]
-                    start_omx = df['omx_index'].iloc[0]
-                else:
-                    start_port = past_data['portfolj_varde'].iloc[-1]
-                    start_omx = past_data['omx_index'].iloc[-1]
-                    
-                p_ret = ((senaste_port / start_port) - 1) * 100 if start_port > 0 else 0
-                o_ret = ((senaste_omx / start_omx) - 1) * 100 if start_omx > 0 else 0
-                return p_ret, o_ret
-            
-            # YTD (I år)
-            start_ytd = pd.to_datetime(f"{senaste_datum.year}-01-01")
-            past_ytd = temp_hist[temp_hist['datum_dt'] <= start_ytd]
-            if past_ytd.empty:
-                start_port_ytd = temp_hist['portfolj_varde'].iloc[0]
-                start_omx_ytd = temp_hist['omx_index'].iloc[0]
-            else:
-                start_port_ytd = past_ytd['portfolj_varde'].iloc[-1]
-                start_omx_ytd = past_ytd['omx_index'].iloc[-1]
-                
-            port_ytd = ((senaste_port / start_port_ytd) - 1) * 100 if start_port_ytd > 0 else 0
-            omx_ytd = ((senaste_omx / start_omx_ytd) - 1) * 100 if start_omx_ytd > 0 else 0
-            
-            port_1m, omx_1m = calc_period_return(temp_hist, 30)
-            port_1y, omx_1y = calc_period_return(temp_hist, 365)
-            port_tot = senaste_pct['Total Portfölj (%)']
-            omx_tot = senaste_pct['OMXSPI (%)']
-            
-            perf_data = [
-                {"Period": "Senaste månaden (30 dgr)", "Din Portfölj": f"{port_1m:+.2f} %", "OMXSPI": f"{omx_1m:+.2f} %", "Överavkastning (Alfa)": f"{port_1m - omx_1m:+.2f} %"},
-                {"Period": "I år (YTD)", "Din Portfölj": f"{port_ytd:+.2f} %", "OMXSPI": f"{omx_ytd:+.2f} %", "Överavkastning (Alfa)": f"{port_ytd - omx_ytd:+.2f} %"},
-                {"Period": "Senaste året (365 dgr)", "Din Portfölj": f"{port_1y:+.2f} %", "OMXSPI": f"{omx_1y:+.2f} %", "Överavkastning (Alfa)": f"{port_1y - omx_1y:+.2f} %"},
-                {"Period": "Total Utveckling", "Din Portfölj": f"{port_tot:+.2f} %", "OMXSPI": f"{omx_tot:+.2f} %", "Överavkastning (Alfa)": f"{port_tot - omx_tot:+.2f} %"}
-            ]
-            
-            st.table(pd.DataFrame(perf_data).set_index("Period"))
             
         st.subheader("Historisk datatabell")
         st.dataframe(hist_df.rename(columns={'datum': 'Datum', 'varde_value': 'Value (SEK)', 'varde_utdelning': 'Utdelning (SEK)', 'varde_momentum': 'Momentum (SEK)', 'portfolj_varde': 'Total Portfölj (SEK)', 'omx_index': 'OMXSPI Index'}), use_container_width=True)
