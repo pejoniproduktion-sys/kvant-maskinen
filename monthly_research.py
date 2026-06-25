@@ -43,7 +43,7 @@ def run_research():
     # 3. ANALYSERA OCH SKRIV (GEMINI)
     # ==========================================
     print("🧠 Skickar data till AI för analys...")
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
     prompt = f"""
     Du är en professionell analytiker som är expert på systematisk faktorinvestering (Kvant). 
     Jag har gjort en dagsfärsk sökning på nätet om det aktuella marknadsläget ({manad_ar}).
