@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.1", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.2", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -222,35 +222,15 @@ def ladda_och_tvatta_basdata(fil):
 if meny_val == "📊 Översikt & Historik":
     st.title("📊 Portföljöversikt & Dashboard")
     
-    # AUTOMATISK MA200-VARNING DIREKT PÅ STARTSIDAN
+    # 🟢🔴 TRAFIKLJUS FÖR MA200 HÖGST UPP PÅ STARTSIDAN
     auto_warn_df = ladda_automatisk_ma200_gspread()
-    if not auto_warn_df.empty:
-        st.error(f"⚠️ **Automatiskt Trendlarm:** {len(auto_warn_df)} aktier handlas just nu under sitt MA200-medelvärde efter gårdagens stängning!")
-        with st.expander("Visa aktier som brutit MA200 🚨", expanded=False):
+    if auto_warn_df.empty:
+        st.success("🟢 **Trendindikator (MA200):** Alla dina innehav handlas just nu över sin långsiktiga trend (MA200).")
+    else:
+        st.error(f"🔴 **Trendindikator (MA200):** {len(auto_warn_df)} aktier handlas just nu under sin långsiktiga trend!")
+        with st.expander("Visa varningslista 🚨", expanded=False):
             st.dataframe(auto_warn_df, use_container_width=True)
             st.info("💡 Överväg att sälja av dessa innehav och placera kapitalet i kassa under 'Min Portfölj' fram till nästa ordinarie ombalansering.")
-
-    with st.expander("➕ Logga värde per kvantstrategi manuellt"):
-        with st.form("logga_varde"):
-            valt_datum = st.date_input("Välj datum", datetime.now())
-            v_value = st.number_input("Värde: Trending Value (SEK)", min_value=0.0, step=1000.0)
-            v_utd = st.number_input("Utdelning: Trendande Utdelning (SEK)", min_value=0.0, step=1000.0)
-            v_mom = st.number_input("Momentum: Sammansatt Momentum (SEK)", min_value=0.0, step=1000.0)
-            
-            if st.form_submit_button("Spara datapunkt"):
-                datum_str = valt_datum.strftime("%Y-%m-%d")
-                totalt_portfoljvarde = v_value + v_utd + v_mom
-                with st.spinner("Hämtar OMXSPI..."):
-                    try:
-                        omx = yf.Ticker("^OMXSPI")
-                        hist = omx.history(start=valt_datum, end=valt_datum + timedelta(days=4))
-                        if not hist.empty:
-                            omx_stangning = float(hist['Close'].iloc[0])
-                            if spara_historik_gspread(datum_str, v_value, v_utd, v_mom, totalt_portfoljvarde, omx_stangning):
-                                st.success("Sparat!")
-                                st.rerun()
-                        else: st.error("Kunde inte hitta indexkurs.")
-                    except Exception as e: st.error(f"Fel: {e}")
 
     hist_df = ladda_historik_gspread()
     if len(hist_df) >= 1:
@@ -258,9 +238,8 @@ if meny_val == "📊 Översikt & Historik":
         st.subheader("📈 Utveckling jämfört med OMXSPI")
         
         if len(hist_df) >= 2:
-            # TIDSPERIODSVÄLJAREN LIGGER HORISONTELLT UNDER RUBRIKEN
             tidsperiod = st.radio("⏳ Välj tidsperiod för avkastning:", ["Dagsutveckling", "1 Månad", "I år (YTD)", "1 År", "Total Utveckling"], index=4, horizontal=True)
-            st.write("") # Lite luft
+            st.write("") 
             
             temp_hist = hist_df.copy()
             temp_hist['datum_dt'] = pd.to_datetime(temp_hist['datum'])
@@ -299,12 +278,16 @@ if meny_val == "📊 Översikt & Historik":
             ret_mom = calc_ret(senaste_rad['varde_momentum'], start_row['varde_momentum'])
             ret_omx = calc_ret(senaste_rad['omx_index'], start_row['omx_index'])
             
-            c1, c2, c3, c4, c5 = st.columns(5)
+            # BERÄKNA DYNAMISKT ALFA OCH LÄGG TILL I KOLUMNERNA
+            alfa = ret_tot - ret_omx
+            
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
             c1.metric("💼 Total Portfölj", f"{senaste_rad['portfolj_varde']:,.0f} kr".replace(',', ' '), f"{ret_tot:+.1f} %")
-            c2.metric("📈 Value", f"{senaste_rad['varde_value']:,.0f} kr".replace(',', ' '), f"{ret_val:+.1f} %")
-            c3.metric("💸 Utdelning", f"{senaste_rad['varde_utdelning']:,.0f} kr".replace(',', ' '), f"{ret_utd:+.1f} %")
-            c4.metric("⚡ Momentum", f"{senaste_rad['varde_momentum']:,.0f} kr".replace(',', ' '), f"{ret_mom:+.1f} %")
-            c5.metric("📊 OMXSPI", f"{senaste_rad['omx_index']:,.0f}".replace(',', ' '), f"{ret_omx:+.1f} %")
+            c2.metric("🏆 Alfa (vs Index)", f"{alfa:+.1f} %-enh.", f"{alfa:+.1f}")
+            c3.metric("📈 Value", f"{senaste_rad['varde_value']:,.0f} kr".replace(',', ' '), f"{ret_val:+.1f} %")
+            c4.metric("💸 Utdelning", f"{senaste_rad['varde_utdelning']:,.0f} kr".replace(',', ' '), f"{ret_utd:+.1f} %")
+            c5.metric("⚡ Momentum", f"{senaste_rad['varde_momentum']:,.0f} kr".replace(',', ' '), f"{ret_mom:+.1f} %")
+            c6.metric("📊 OMXSPI", f"{senaste_rad['omx_index']:,.0f}".replace(',', ' '), f"{ret_omx:+.1f} %")
             
             st.markdown("---")
             
@@ -319,6 +302,33 @@ if meny_val == "📊 Översikt & Historik":
         st.subheader("Historisk datatabell")
         st.dataframe(hist_df.rename(columns={'datum': 'Datum', 'varde_value': 'Value (SEK)', 'varde_utdelning': 'Utdelning (SEK)', 'varde_momentum': 'Momentum (SEK)', 'portfolj_varde': 'Total Portfölj (SEK)', 'omx_index': 'OMXSPI Index'}), use_container_width=True)
     else: st.warning("Kalkylarket är tomt.")
+    
+    st.markdown("---")
+    
+    # KNAPPEN FÖR MANUELL LOGGNING (FLYTTAD LÄNGST NER SOM BACKUP)
+    with st.expander("⚙️ Nödverktyg: Logga värde per kvantstrategi manuellt"):
+        st.info("Din dagliga robot gör detta automatiskt kl 18:00 varje kväll, men du kan använda detta formulär om du vill logga data manuellt mitt på dagen.")
+        with st.form("logga_varde"):
+            valt_datum = st.date_input("Välj datum", datetime.now())
+            v_value = st.number_input("Värde: Trending Value (SEK)", min_value=0.0, step=1000.0)
+            v_utd = st.number_input("Utdelning: Trendande Utdelning (SEK)", min_value=0.0, step=1000.0)
+            v_mom = st.number_input("Momentum: Sammansatt Momentum (SEK)", min_value=0.0, step=1000.0)
+            
+            if st.form_submit_button("Spara datapunkt"):
+                datum_str = valt_datum.strftime("%Y-%m-%d")
+                totalt_portfoljvarde = v_value + v_utd + v_mom
+                with st.spinner("Hämtar OMXSPI..."):
+                    try:
+                        omx = yf.Ticker("^OMXSPI")
+                        hist = omx.history(start=valt_datum, end=valt_datum + timedelta(days=4))
+                        if not hist.empty:
+                            omx_stangning = float(hist['Close'].iloc[0])
+                            if spara_historik_gspread(datum_str, v_value, v_utd, v_mom, totalt_portfoljvarde, omx_stangning):
+                                st.success("Sparat!")
+                                st.rerun()
+                        else: st.error("Kunde inte hitta indexkurs.")
+                    except Exception as e: st.error(f"Fel: {e}")
+
 
 # --- SIDA 2: PORTFÖLJANALYS & RÅDGIVARE ---
 elif meny_val == "🧠 Portföljanalys & Råd":
@@ -329,14 +339,14 @@ elif meny_val == "🧠 Portföljanalys & Råd":
         st.subheader("🤖 Månadens Kvant-forskning (AI)")
         if ai_datum:
             st.caption(f"🗓️ {ai_datum}")
-            with st.expander("Läs månadens marknadsanalys", expanded=True):
+            # MINIMERAD EXPANDER (expanded=False)
+            with st.expander("Läs månadens marknadsanalys", expanded=False):
                 st.markdown(ai_text)
         else:
             st.info(ai_text)
             
     st.markdown("---")
     
-    # MANUELL MA200-SÖKNING
     st.subheader("🚨 Trendbevakning (Manuell MA200-scanning)")
     st.write("Klicka nedan för att göra en direkt-scanning i realtid av dina innehav mot MA200.")
     
@@ -418,7 +428,7 @@ elif meny_val == "🧠 Portföljanalys & Råd":
         hist_df = ladda_historik_gspread()
         if len(hist_df) >= 2:
             st.markdown("---")
-            st.subheader("🏆 Din Prestation (Alfa)")
+            st.subheader("🏆 Din Prestation (Alfa - Total Utveckling)")
             port_start = hist_df['portfolj_varde'].iloc[0]
             omx_start = hist_df['omx_index'].iloc[0]
             port_utv = (hist_df['portfolj_varde'].iloc[-1] / port_start) * 100 - 100 if port_start > 0 else 0
@@ -426,9 +436,9 @@ elif meny_val == "🧠 Portföljanalys & Råd":
             alfa = port_utv - omx_utv
             
             c1, c2 = st.columns(2)
-            c1.metric("Din Utveckling vs Index (Alfa)", f"{alfa:+.2f} procentenheter")
-            if alfa > 0: c2.success("Fantastiskt jobbat! Din Kvant-maskin slår marknaden.")
-            else: c2.warning("Du underpresterar just nu mot index. Kvantstrategier kräver tålamod.")
+            c1.metric("Din Totala Utveckling vs Index (Alfa)", f"{alfa:+.2f} procentenheter")
+            if alfa > 0: c2.success("Fantastiskt jobbat! Din Kvant-maskin slår marknaden totalt sett.")
+            else: c2.warning("Du underpresterar totalt sett mot index. Kvantstrategier kräver tålamod.")
     elif har_nagra_aktier:
         st.warning("⚠️ **Aktier hittades, men det totala värdet är 0 kr!** Hämta livekurser för att fylla i priser.")
 
