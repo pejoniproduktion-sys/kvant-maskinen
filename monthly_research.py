@@ -29,14 +29,18 @@ def run_research():
     # ==========================================
     print("🌐 Söker på internet efter kvant-trender...")
     query = f"Quantitative investing latest trends {manad_ar} value dividend momentum factor investing market sentiment"
-    search_result = tavily_client.search(query=query, search_depth="advanced", max_results=5)
     
-    kontext = "Här är data jag samlat in från nätet:\n\n"
-    for result in search_result['results']:
-        kontext += f"Titel: {result['title']}\nInnehåll: {result['content']}\n\n"
+    try:
+        search_result = tavily_client.search(query=query, search_depth="advanced", max_results=5)
+        kontext = "Här är data jag samlat in från nätet:\n\n"
+        for result in search_result['results']:
+            kontext += f"Titel: {result['title']}\nInnehåll: {result['content']}\n\n"
+    except Exception as e:
+        print(f"🚨 Fel vid sökning på internet: {e}")
+        return
 
     # ==========================================
-    # 3. ANALYSERA OCH SKRIV (GEMINI)
+    # 3. ANALYSERA OCH SKRIV (GEMINI) - FALLBACK MOTOR
     # ==========================================
     print("🧠 Skickar data till AI för analys...")
     prompt = f"""
@@ -59,11 +63,33 @@ def run_research():
     Var objektiv, professionell och använd emojis för att göra texten lättläst.
     """
     
-    response = gemini_client.models.generate_content(
-        model='gemini-1.5-flash',
-        contents=prompt,
-    )
-    ai_text = response.text
+    # Lista på möjliga modeller. Roboten testar dem uppifrån och ner.
+    modeller_att_testa = [
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-1.5-flash-002',
+        'gemini-1.5-flash',
+        'gemini-1.5-pro',
+        'gemini-pro'
+    ]
+    
+    ai_text = ""
+    for m in modeller_att_testa:
+        try:
+            print(f"⏳ Försöker ansluta till modell: {m}...")
+            response = gemini_client.models.generate_content(
+                model=m,
+                contents=prompt,
+            )
+            ai_text = response.text
+            print(f"✅ Succé! Modellen '{m}' accepterades och genererade analysen.")
+            break # Avbryt loopen - vi har vår text!
+        except Exception as e:
+            print(f"❌ Modellen '{m}' nekades. Testar nästa...")
+            
+    if not ai_text:
+        print("🚨 KATASTROF: Ingen av Googles modeller var tillgängliga. Analysen avbryts.")
+        return
 
     # ==========================================
     # 4. SPARA TILL GOOGLE SHEETS
