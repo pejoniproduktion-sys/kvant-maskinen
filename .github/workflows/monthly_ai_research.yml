@@ -2,9 +2,8 @@ name: Månadsvis AI-Forskning
 
 on:
   schedule:
-    # Körs kl 08:00 UTC (vilket blir kl 09:00 eller 10:00 svensk tid) den 1:a i varje månad
     - cron: '0 8 1 * *'
-  workflow_dispatch: # Gör att vi kan testköra den manuellt!
+  workflow_dispatch:
 
 jobs:
   ai-research:
@@ -17,12 +16,12 @@ jobs:
     - name: Installera Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.11'
 
     - name: Installera bibliotek
       run: |
         python -m pip install --upgrade pip
-        pip install gspread google-auth google-generativeai tavily-python
+        pip install gspread google-auth google-genai tavily-python
 
     - name: Kor AI-forskning
       env:
