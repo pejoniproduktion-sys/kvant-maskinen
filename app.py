@@ -10,14 +10,14 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v5.0", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v5.1", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
     creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     return gspread.authorize(creds)
 
-# --- Funktioner för Historik ---
+# --- Funktioner för Datahämtning ---
 def ladda_historik_gspread():
     try:
         gc = get_gspread_client()
@@ -66,7 +66,6 @@ def spara_historik_gspread(datum_str, v_val, v_utd, v_mom, tot, omx):
     except: 
         return False
 
-# --- Funktioner för Innehav ---
 def ladda_innehav_gspread(strategi):
     fliknamn = f"Innehav_{strategi}"
     try:
@@ -111,6 +110,19 @@ def spara_innehav_gspread(df_ny, strategi):
         return True
     except: 
         return False
+
+# Ny funktion för att hämta AI-Analysen
+def ladda_ai_analys_gspread():
+    try:
+        gc = get_gspread_client()
+        sh = gc.open_by_url(st.secrets["google_sheet_url"])
+        worksheet = sh.worksheet("AI_Analys")
+        data = worksheet.get_all_values()
+        if len(data) >= 2:
+            return data[0][0], data[1][0] # Returnerar Datum och AI-Text
+        return None, "Ingen analys hittades."
+    except:
+        return None, "Väntar på att AI-roboten ska köra sin första analys..."
 
 # ==========================================
 # 2. GLOBAL DATASANERING & SESSION STATE
@@ -229,7 +241,6 @@ if meny_val == "📊 Översikt & Historik":
         st.subheader("📈 Utveckling jämfört med OMXSPI")
         
         if len(hist_df) >= 2:
-            # INTERAKTIV TIDVÄLJARE MED DAGSUTVECKLING INKLUDERAD
             tidsperiod = st.sidebar.radio("⏳ Välj tidsperiod för instrumentpanelen:", ["Dagsutveckling", "1 Månad", "I år (YTD)", "1 År", "Total Utveckling"], index=4)
             st.markdown(f"**Visar just nu:** `{tidsperiod}`")
             
@@ -238,7 +249,6 @@ if meny_val == "📊 Översikt & Historik":
             senaste_datum = temp_hist['datum_dt'].iloc[-1]
             senaste_rad = temp_hist.iloc[-1]
             
-            # Beräkningslogik per tidsperiod
             if tidsperiod == "Dagsutveckling":
                 if len(temp_hist) >= 2:
                     start_row = temp_hist.iloc[-2]
@@ -280,7 +290,6 @@ if meny_val == "📊 Översikt & Historik":
             
             st.markdown("---")
             
-            # Grafen visar alltid det totala historiska förloppet
             kols = {'varde_value': 'Value (%)', 'varde_utdelning': 'Utdelning (%)', 'varde_momentum': 'Momentum (%)', 'portfolj_varde': 'Total Portfölj (%)', 'omx_index': 'OMXSPI (%)'}
             graf_df = hist_df[['datum']].copy()
             for org_col, ny_col in kols.items():
@@ -297,6 +306,21 @@ if meny_val == "📊 Översikt & Historik":
 elif meny_val == "🧠 Portföljanalys & Råd":
     st.title("🧠 Portföljanalys & AI-Rådgivare")
     
+    # === NY SEKTION: AI FORSKNING ===
+    ai_datum, ai_text = ladda_ai_analys_gspread()
+    
+    with st.container():
+        st.subheader("🤖 Månadens Kvant-forskning (AI)")
+        if ai_datum:
+            st.caption(f"🗓️ {ai_datum}")
+            with st.expander("Läs månadens marknadsanalys", expanded=True):
+                st.markdown(ai_text)
+        else:
+            st.info(ai_text)
+            
+    st.markdown("---")
+    
+    # === BEFINTLIG PORTFÖLJANALYS ===
     varden = {}
     total_nu = 0.0
     har_nagra_aktier = False
@@ -409,7 +433,7 @@ elif meny_val == "💼 Min Portfölj":
             temp_bef = st.session_state[f'bef_portfolj_{vald}'].copy()
             for idx, row in temp_bef.iterrows():
                 t = str(row['Ticker']).upper().strip()
-                if t in cursor_dict: temp_bef.at[idx, 'Kurs'] = float(kurs_dict[t])
+                if t in kurs_dict: temp_bef.at[idx, 'Kurs'] = float(kurs_dict[t])
             st.session_state[f'bef_portfolj_{vald}'] = temp_bef
             st.success("Kurserna har uppdaterats från fil!")
             st.rerun()
@@ -468,7 +492,7 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
 
     st.markdown("---")
     if nuvarande_manad in [11, 12, 1]:
-        st.success("🟢 **Fokus: Värdestrategi (Value)**\n\nDu befinner dig i bästa möjliga miljö för Värdebolag. Nedpressade bolag säljs av fondförvaltare i skatteplaneringssyfte innan nyår (Tax-loss harvesting). In januari köps dessa tillbaka vilket skapar kraftiga studsar uppåt (Januarieffekten).")
+        st.success("🟢 **Fokus: Värdestrategi (Value)**\n\nDu befinner dig i bästa möjliga miljö för Värdebolag. Nedpressade bolag säljs av fondförvaltare i skatteplaneringssyfte innan nyår (Tax-loss harvesting). I januari köps dessa tillbaka vilket skapar kraftiga studsar uppåt (Januarieffekten).")
         if nuvarande_manad in [12, 1]:
             st.error("🔴 **Varning: Momentum Crash**\n\nEftersom förlorarna (Värde) studsar i januari, sker det motsatta för årets stora vinnare (Momentum). Investerare plockar hem vinsten. Januari är årets absolut sämsta månad för en renodlad Momentum-strategi.")
     elif nuvarande_manad in [2, 3, 4]:
