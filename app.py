@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.0", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.1", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -123,6 +123,16 @@ def ladda_ai_analys_gspread():
     except:
         return None, "Väntar på att AI-roboten ska köra sin första analys..."
 
+def ladda_automatisk_ma200_gspread():
+    try:
+        gc = get_gspread_client()
+        sh = gc.open_by_url(st.secrets["google_sheet_url"])
+        worksheet = sh.worksheet("MA200_Varningar")
+        data = worksheet.get_all_records()
+        return pd.DataFrame(data)
+    except:
+        return pd.DataFrame()
+
 # ==========================================
 # 2. GLOBAL DATASANERING & SESSION STATE
 # ==========================================
@@ -212,7 +222,15 @@ def ladda_och_tvatta_basdata(fil):
 if meny_val == "📊 Översikt & Historik":
     st.title("📊 Portföljöversikt & Dashboard")
     
-    with st.expander("➕ Logga värde per kvantstrategi"):
+    # AUTOMATISK MA200-VARNING DIREKT PÅ STARTSIDAN
+    auto_warn_df = ladda_automatisk_ma200_gspread()
+    if not auto_warn_df.empty:
+        st.error(f"⚠️ **Automatiskt Trendlarm:** {len(auto_warn_df)} aktier handlas just nu under sitt MA200-medelvärde efter gårdagens stängning!")
+        with st.expander("Visa aktier som brutit MA200 🚨", expanded=False):
+            st.dataframe(auto_warn_df, use_container_width=True)
+            st.info("💡 Överväg att sälja av dessa innehav och placera kapitalet i kassa under 'Min Portfölj' fram till nästa ordinarie ombalansering.")
+
+    with st.expander("➕ Logga värde per kvantstrategi manuellt"):
         with st.form("logga_varde"):
             valt_datum = st.date_input("Välj datum", datetime.now())
             v_value = st.number_input("Värde: Trending Value (SEK)", min_value=0.0, step=1000.0)
@@ -240,8 +258,9 @@ if meny_val == "📊 Översikt & Historik":
         st.subheader("📈 Utveckling jämfört med OMXSPI")
         
         if len(hist_df) >= 2:
-            # NY PLACERING FÖR TIDSPERIODSVÄLJAREN
+            # TIDSPERIODSVÄLJAREN LIGGER HORISONTELLT UNDER RUBRIKEN
             tidsperiod = st.radio("⏳ Välj tidsperiod för avkastning:", ["Dagsutveckling", "1 Månad", "I år (YTD)", "1 År", "Total Utveckling"], index=4, horizontal=True)
+            st.write("") # Lite luft
             
             temp_hist = hist_df.copy()
             temp_hist['datum_dt'] = pd.to_datetime(temp_hist['datum'])
@@ -317,11 +336,11 @@ elif meny_val == "🧠 Portföljanalys & Råd":
             
     st.markdown("---")
     
-    # === NY SEKTION: MA200 VARNING ===
-    st.subheader("🚨 Trendbevakning (MA200)")
-    st.write("Kvant-maskinen kan scanna dina nuvarande innehav och varna ifall någon aktie fallit under sin långsiktiga trend (200-dagars glidande medelvärde).")
+    # MANUELL MA200-SÖKNING
+    st.subheader("🚨 Trendbevakning (Manuell MA200-scanning)")
+    st.write("Klicka nedan för att göra en direkt-scanning i realtid av dina innehav mot MA200.")
     
-    if st.button("Sök efter aktier under MA200", type="primary"):
+    if st.button("Kör manuell scanning nu", type="primary"):
         with st.spinner("Hämtar historisk data och analyserar MA200 för hela portföljen..."):
             varningar = []
             for s in strategier:
@@ -333,7 +352,7 @@ elif meny_val == "🧠 Portföljanalys & Råd":
                         try:
                             aktie = yf.Ticker(yf_ticker)
                             hist = aktie.history(period="1y")
-                            if len(hist) > 150: # Behöver tillräckligt med data
+                            if len(hist) > 150:
                                 ma200 = hist['Close'].tail(200).mean()
                                 senaste_kurs = hist['Close'].iloc[-1]
                                 if senaste_kurs < ma200:
@@ -347,14 +366,14 @@ elif meny_val == "🧠 Portföljanalys & Råd":
                                     })
                         except: pass
             if varningar:
-                st.error(f"⚠️ Varning: Hittade {len(varningar)} aktier som handlas under sitt MA200.")
+                st.error(f"⚠️ Hittade {len(varningar)} aktier under sitt MA200 just nu.")
                 df_v = pd.DataFrame(varningar)
                 df_v['Kurs'] = df_v['Kurs'].apply(lambda x: f"{x:.2f} kr")
                 df_v['MA200'] = df_v['MA200'].apply(lambda x: f"{x:.2f} kr")
                 df_v['Avvikelse'] = df_v['Avvikelse'].apply(lambda x: f"{x:.1f} %")
                 st.dataframe(df_v, use_container_width=True)
             else:
-                st.success("✅ Alla dina aktier befinner sig i en stark trend (handlas över MA200)!")
+                st.success("✅ Alla dina aktier handlas över sitt MA200 för tillfället!")
     
     st.markdown("---")
 
@@ -447,8 +466,7 @@ elif meny_val == "💼 Min Portfölj":
                     st.session_state[f'bef_portfolj_{vald}'] = df_curr[df_curr['Ticker'] != vald_att_ta_bort].reset_index(drop=True)
                     st.success(f"{vald_att_ta_bort} har raderats!")
                     st.rerun()
-            else:
-                st.write("Inga aktier att ta bort.")
+            else: st.write("Inga aktier att ta bort.")
                 
     with c3:
         with st.expander("💵 Hantera Kassasaldo"):
@@ -555,6 +573,23 @@ elif meny_val == "📖 Om Kvantstrategierna":
     *Gemensamt grundkrav för alla strategier:*
     * **Storlek:** Börsvärde >= 500 MSEK.
     * **Listor:** Endast Large, Mid och Small Cap.
+    """)
+    st.header("📈 1. Trending Value")
+    st.markdown("""
+    1. Koden rankar alla godkända bolag från 1 (billigast) och uppåt på följande nyckeltal: **P/E, P/S, P/B, P/FCF, och EV/EBITDA**.
+    2. Saknas data straffas bolaget med ett högt fiktivt värde (5000) för att hamna längst ner i rankingen.
+    3. De 40 absolut billigaste bolagen plockas ut.
+    4. De 40 billigaste bolagen sorteras så och de 10 med bäst **Sammansatt Momentum** (snitt av 3m, 6m, 12m) väljs ut.
+    """)
+    st.header("💸 2. Trendande Utdelning")
+    st.markdown("""
+    1. Koden plockar ut de 40 bolagen med absolut högst direktavkastning i %.
+    2. Högutdelarna sorteras efter Sammansatt Momentum. De 10 med starkast positiv trend blir din målkorg.
+    """)
+    st.header("⚡ 3. Sammansatt Momentum")
+    st.markdown("""
+    1. Koden beräknar **Sammansatt Momentum** = (Utv 3m + Utv 6m + Utv 12m) / 3.
+    2. Hela börsens bolag sorteras efter detta sammansatta värde och de 10 bästa väljs rakt av.
     """)
 
 # --- SIDA 6, 7, 8: STRATEGIKALKYLATORERNA ---
