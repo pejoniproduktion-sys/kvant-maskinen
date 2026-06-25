@@ -60,7 +60,7 @@ def run_research():
     """
     
     response = gemini_client.models.generate_content(
-        model='gemini-1.5-flash',
+        model='gemini-1.5-pro',
         contents=prompt,
     )
     ai_text = response.text
