@@ -281,13 +281,19 @@ if meny_val == "📊 Översikt & Historik":
             # BERÄKNA DYNAMISKT ALFA OCH LÄGG TILL I KOLUMNERNA
             alfa = ret_tot - ret_omx
             
-            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            # RAD 1: Övergripande portfölj och Index
+            c1, c2, c3 = st.columns(3)
             c1.metric("💼 Total Portfölj", f"{senaste_rad['portfolj_varde']:,.0f} kr".replace(',', ' '), f"{ret_tot:+.1f} %")
             c2.metric("🏆 Alfa (vs Index)", f"{alfa:+.1f} %-enh.", f"{alfa:+.1f}")
-            c3.metric("📈 Value", f"{senaste_rad['varde_value']:,.0f} kr".replace(',', ' '), f"{ret_val:+.1f} %")
-            c4.metric("💸 Utdelning", f"{senaste_rad['varde_utdelning']:,.0f} kr".replace(',', ' '), f"{ret_utd:+.1f} %")
-            c5.metric("⚡ Momentum", f"{senaste_rad['varde_momentum']:,.0f} kr".replace(',', ' '), f"{ret_mom:+.1f} %")
-            c6.metric("📊 OMXSPI", f"{senaste_rad['omx_index']:,.0f}".replace(',', ' '), f"{ret_omx:+.1f} %")
+            c3.metric("📊 OMXSPI", f"{senaste_rad['omx_index']:,.0f}".replace(',', ' '), f"{ret_omx:+.1f} %")
+            
+            st.write("") # Skapar lite snygg luft mellan raderna
+            
+            # RAD 2: De specifika strategierna
+            c4, c5, c6 = st.columns(3)
+            c4.metric("📈 Value", f"{senaste_rad['varde_value']:,.0f} kr".replace(',', ' '), f"{ret_val:+.1f} %")
+            c5.metric("💸 Utdelning", f"{senaste_rad['varde_utdelning']:,.0f} kr".replace(',', ' '), f"{ret_utd:+.1f} %")
+            c6.metric("⚡ Momentum", f"{senaste_rad['varde_momentum']:,.0f} kr".replace(',', ' '), f"{ret_mom:+.1f} %")
             
             st.markdown("---")
             
