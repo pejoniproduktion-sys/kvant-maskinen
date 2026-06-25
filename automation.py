@@ -4,12 +4,12 @@ from datetime import datetime, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
 import yfinance as yf
+import pandas as pd
 
 # ==========================================
 # 1. KOPPLING TILL GOOGLE SHEETS VIA ENV
 # ==========================================
 def get_gspread_client():
-    # Hämtar dina credentials från GitHub Secrets istället för Streamlit Secrets
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(
         creds_dict, 
@@ -26,9 +26,10 @@ def kor_automatisk_uppdatering():
     
     strategier = ["Value", "Utdelning", "Momentum"]
     strategi_varden = {}
+    ma200_varningar = [] # Här sparar vi aktier som bryter MA200
     
     # ==========================================
-    # 2. UPPDATERA LIVE-KURSER FÖR VARJE INNEHAV
+    # 2. UPPDATERA LIVE-KURSER OCH KOLLA MA200
     # ==========================================
     for s in strategier:
         fliknamn = f"Innehav_{s}"
@@ -57,6 +58,13 @@ def kor_automatisk_uppdatering():
             if not ticker:
                 continue
                 
+            # Om det är kassa ska vi inte hämta kurser från Yahoo
+            if ticker == 'KASSA':
+                kassa_kurs = float(str(row.get("Kurs", "0")).replace("'", "").replace(",", "."))
+                totalt_varde_strategi += kassa_kurs
+                rader_att_spara.append([namn, ticker, "1", f"'{kassa_kurs:.2f}"])
+                continue
+                
             # Yahoo-formatering (ex: SSAB B -> SSAB-B.ST)
             t_formatted = ticker.replace(" ", "-")
             yf_ticker = t_formatted if "." in t_formatted else f"{t_formatted}.ST"
@@ -64,20 +72,25 @@ def kor_automatisk_uppdatering():
             ny_kurs = 0.0
             try:
                 aktie = yf.Ticker(yf_ticker)
-                hist = aktie.history(period="1d")
+                # Hämtar 1 års historik för att både få dagens kurs och kunna räkna ut MA200
+                hist = aktie.history(period="1y")
                 if not hist.empty:
                     ny_kurs = round(float(hist['Close'].iloc[-1]), 2)
                     print(f"✅ {ticker}: {ny_kurs} kr")
+                    
+                    # Beräkna MA200
+                    if len(hist) >= 150:
+                        ma200 = round(float(hist['Close'].tail(200).mean()), 2)
+                        if ny_kurs < ma200:
+                            avvikelse = ((ny_kurs / ma200) - 1) * 100
+                            ma200_varningar.append([s, namn, ticker, f"{ny_kurs:.2f}", f"{ma200:.2f}", f"{avvikelse:.1f}%"])
                 else:
-                    # Fallback om yahoo inte svarar, behåll gammal kurs
                     ny_kurs = float(str(row.get("Kurs", "0")).replace("'", "").replace(",", "."))
             except Exception as e:
                 print(f"❌ Fel vid hämtning av {ticker}: {e}")
                 ny_kurs = float(str(row.get("Kurs", "0")).replace("'", "").replace(",", "."))
                 
             totalt_varde_strategi += (antal * ny_kurs)
-            
-            # Formatera med apostrof för att förhindra komma-buggen i Google Sheets
             kurs_str = f"'{ny_kurs:.2f}"
             rader_att_spara.append([namn, ticker, str(antal), kurs_str])
             
@@ -87,11 +100,25 @@ def kor_automatisk_uppdatering():
         if rader_att_spara:
             worksheet.append_rows(rader_att_spara, value_input_option='USER_ENTERED')
             
-        strategi_varden[s] = totalt_portfolj_varde = totalt_varde_strategi
-        print(f"💰 Totalt värde för {s}: {totalt_varde_strategi:,.2f} SEK")
+        strategi_varden[s] = totalt_varde_strategi
 
     # ==========================================
-    # 3. HÄMTA OMXSPI OCH LOGGA I HISTORIKEN
+    # 3. SPARA MA200-VARNINGAR TILL EN EGEN FLIK
+    # ==========================================
+    print("🚨 Sparar MA200-varningar...")
+    try:
+        worksheet_warn = sh.worksheet("MA200_Varningar")
+    except:
+        worksheet_warn = sh.add_worksheet(title="MA200_Varningar", rows="50", cols="6")
+        
+    worksheet_warn.clear()
+    worksheet_warn.append_row(["Strategi", "Bolagsnamn", "Ticker", "Kurs", "MA200", "Avvikelse"])
+    if ma200_varningar:
+        worksheet_warn.append_rows(ma200_varningar, value_input_option='USER_ENTERED')
+    print(f"📊 Hittade {len(ma200_varningar)} stycken aktier under MA200.")
+
+    # ==========================================
+    # 4. HÄMTA OMXSPI OCH LOGGA I HISTORIKEN
     # ==========================================
     print("📈 Hämtar dagsaktuellt OMXSPI-index...")
     omx_stangning = 0.0
@@ -100,24 +127,18 @@ def kor_automatisk_uppdatering():
         hist_omx = omx.history(period="1d")
         if not hist_omx.empty:
             omx_stangning = round(float(hist_omx['Close'].iloc[-1]), 2)
-            print(f"✅ OMXSPI: {omx_stangning}")
     except Exception as e:
         print(f"❌ Kunde inte hämta OMXSPI: {e}")
 
-    # Beräkna totalen
     v_val = strategi_varden.get("Value", 0.0)
     v_utd = strategi_varden.get("Utdelning", 0.0)
     v_mom = strategi_varden.get("Momentum", 0.0)
     total_portfolj = v_val + v_utd + v_mom
     datum_str = datetime.now().strftime("%Y-%m-%d")
     
-    print(f"📊 Loggar till Historik: {datum_str} | Total: {total_portfolj} kr")
-    
-    # Spara till historik-fliken
     worksheet_hist = sh.worksheet("Historik")
     data_hist = worksheet_hist.get_all_values()
     
-    # Kolla om datumet redan finns för att undvika dubbletter samma dag
     found_row = None
     if data_hist:
         for i, row in enumerate(data_hist[1:]):
@@ -131,7 +152,6 @@ def kor_automatisk_uppdatering():
         worksheet_hist.update_cell(found_row, 4, f"'{v_mom:.2f}")
         worksheet_hist.update_cell(found_row, 5, f"'{total_portfolj:.2f}")
         worksheet_hist.update_cell(found_row, 6, f"'{omx_stangning:.2f}")
-        print("📝 Uppdaterade befintlig rad i Historik.")
     else:
         worksheet_hist.append_row([
             datum_str, 
@@ -141,7 +161,6 @@ def kor_automatisk_uppdatering():
             f"'{total_portfolj:.2f}", 
             f"'{omx_stangning:.2f}"
         ], value_input_option='USER_ENTERED')
-        print("➕ Lade till ny rad i Historik.")
         
     print("🎉 Automatiseringen kördes utan problem!")
 
