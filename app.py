@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.4", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.5", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -341,7 +341,7 @@ elif meny_val == "🧠 Portföljanalys & Råd":
             
     st.markdown("---")
 
-    # === NY SEKTION: MATEMATISK RISKANALYS MED PEDAGOGISK TEXT ===
+    # === NY SEKTION: MATEMATISK RISKANALYS MED PEDAGOGISK TOLKNING ===
     st.subheader("🛡️ Avancerad Riskanalys & Nyckeltal")
     
     hist_df = ladda_historik_gspread()
@@ -369,7 +369,7 @@ elif meny_val == "🧠 Portföljanalys & Råd":
         * **Över 2.0:** Exceptionellt! Hög vinst med väldigt lite dramatik.
     """)
     if st.button("📊 Beräkna risknyckeltal för innehav", type="secondary"):
-        with st.spinner("Hämtar historisk data och beräknar riskmått..."):
+        with st.spinner("Hämtar historisk data och analyserar..."):
             risk_data = []
             for s in strategier:
                 df = st.session_state[f'bef_portfolj_{s}']
@@ -385,19 +385,32 @@ elif meny_val == "🧠 Portföljanalys & Råd":
                                 vol = returns.std() * np.sqrt(252) * 100 
                                 ann_ret = (hist['Close'].iloc[-1] / hist['Close'].iloc[0] - 1) * 100
                                 sharpe = (ann_ret - 3.0) / vol if vol > 0 else 0
+                                
+                                vol_status = "🟢 Stabil" if vol < 25 else ("🟡 Volatil" if vol < 40 else "🔴 Mycket orolig")
+                                sharpe_status = "🟢 Utmärkt" if sharpe > 1.5 else ("🟡 Bra" if sharpe > 0.5 else "🔴 Svag")
+                                
                                 risk_data.append({
                                     "Strategi": s,
                                     "Aktie": row['Bolagsnamn'],
-                                    "Ticker": t,
-                                    "Årlig Volatilitet": f"{vol:.1f} %",
-                                    "1-Års Avkastning": f"{ann_ret:+.1f} %",
-                                    "Sharpekvot (Rf=3%)": round(sharpe, 2)
+                                    "Årlig Volatilitet": f"{vol:.1f}% ({vol_status})",
+                                    "Sharpe (Rf=3%)": f"{round(sharpe, 2)} ({sharpe_status})",
+                                    "1-Års Avkastning": f"{ann_ret:+.1f} %"
                                 })
                         except: pass
+            
             if risk_data:
                 st.dataframe(pd.DataFrame(risk_data).sort_values(by="Sharpekvot (Rf=3%)", ascending=False).reset_index(drop=True), use_container_width=True)
+                
+                st.markdown("---")
+                st.info("💡 **Kort sagt - Hur ska du läsa dessa siffror?**")
+                st.write("""
+                * **Om aktien har hög volatilitet men också hög Sharpekvot:** 
+                Du gör rätt som äger den! Du får bra betalt för att du vågar sitta kvar när det skumpar.
+                * **Om aktien däremot har hög volatilitet och låg Sharpekvot:** 
+                Då betalar du i 'stress' utan att få tillräcklig avkastning för det. Det är då du bör överväga att sälja!
+                """)
             else:
-                st.warning("Hittade inga aktiva innehav att analysera.")
+                st.warning("Hittade inga aktiva innehav.")
 
     st.markdown("---")
     
