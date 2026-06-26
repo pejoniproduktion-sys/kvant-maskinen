@@ -6,9 +6,6 @@ from google.oauth2.service_account import Credentials
 import yfinance as yf
 import pandas as pd
 
-# ==========================================
-# 1. KOPPLING TILL GOOGLE SHEETS VIA ENV
-# ==========================================
 def get_gspread_client():
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(
@@ -26,11 +23,8 @@ def kor_automatisk_uppdatering():
     
     strategier = ["Value", "Utdelning", "Momentum"]
     strategi_varden = {}
-    ma200_varningar = [] # Här sparar vi aktier som bryter MA200
+    ma200_varningar = [] 
     
-    # ==========================================
-    # 2. UPPDATERA LIVE-KURSER OCH KOLLA MA200
-    # ==========================================
     for s in strategier:
         fliknamn = f"Innehav_{s}"
         print(f"📦 Bearbetar {fliknamn}...")
@@ -38,7 +32,6 @@ def kor_automatisk_uppdatering():
         data = worksheet.get_all_records()
         
         if not data:
-            print(f"⚠️ Fliken {fliknamn} var tom eller saknas.")
             strategi_varden[s] = 0.0
             continue
             
@@ -49,7 +42,6 @@ def kor_automatisk_uppdatering():
             namn = row.get("Bolagsnamn", "")
             ticker = str(row.get("Ticker", "")).upper().replace(" SEK", "").strip()
             antal = 0
-            
             try:
                 antal = int(str(row.get("Antal", "0")).replace("'", ""))
             except:
@@ -58,43 +50,57 @@ def kor_automatisk_uppdatering():
             if not ticker:
                 continue
                 
-            # Om det är kassa ska vi inte hämta kurser från Yahoo
             if ticker == 'KASSA':
                 kassa_kurs = float(str(row.get("Kurs", "0")).replace("'", "").replace(",", "."))
                 totalt_varde_strategi += kassa_kurs
                 rader_att_spara.append([namn, ticker, "1", f"'{kassa_kurs:.2f}"])
                 continue
                 
-            # Yahoo-formatering (ex: SSAB B -> SSAB-B.ST)
             t_formatted = ticker.replace(" ", "-")
             yf_ticker = t_formatted if "." in t_formatted else f"{t_formatted}.ST"
             
+            # --- DET SKOTTSÄKRA SKYDDSNÄTET ---
+            # 1. Hämta gårdagens värde som reserv (fallback)
+            fallback_str = str(row.get("Kurs", "0")).lower().replace("'", "").replace(",", ".").replace(" ", "").replace("nan", "0")
+            try:
+                gammal_kurs = float(fallback_str)
+            except:
+                gammal_kurs = 0.0
+            
             ny_kurs = 0.0
+            ma200 = 0.0
+            
+            # 2. Hämta data från Yahoo
             try:
                 aktie = yf.Ticker(yf_ticker)
-                # Hämtar 1 års historik för att både få dagens kurs och kunna räkna ut MA200
                 hist = aktie.history(period="1y")
                 if not hist.empty:
-                    ny_kurs = round(float(hist['Close'].iloc[-1]), 2)
-                    print(f"✅ {ticker}: {ny_kurs} kr")
-                    
-                    # Beräkna MA200
-                    if len(hist) >= 150:
-                        ma200 = round(float(hist['Close'].tail(200).mean()), 2)
-                        if ny_kurs < ma200:
-                            avvikelse = ((ny_kurs / ma200) - 1) * 100
-                            ma200_varningar.append([s, namn, ticker, f"{ny_kurs:.2f}", f"{ma200:.2f}", f"{avvikelse:.1f}%"])
-                else:
-                    ny_kurs = float(str(row.get("Kurs", "0")).replace("'", "").replace(",", "."))
+                    # Rensa bort alla skräprader (NaN) som Yahoo ibland skickar nattetid
+                    hist_clean = hist.dropna(subset=['Close'])
+                    if not hist_clean.empty:
+                        ny_kurs = round(float(hist_clean['Close'].iloc[-1]), 2)
+                        
+                        # MA200 Beräkning
+                        if len(hist_clean) >= 150:
+                            ma200 = round(float(hist_clean['Close'].tail(200).mean()), 2)
             except Exception as e:
                 print(f"❌ Fel vid hämtning av {ticker}: {e}")
-                ny_kurs = float(str(row.get("Kurs", "0")).replace("'", "").replace(",", "."))
                 
+            # 3. Kontrollera om Yahoo misslyckades eller returnerade 0
+            if pd.isna(ny_kurs) or ny_kurs <= 0:
+                ny_kurs = gammal_kurs # Aktivera reservvärdet!
+                
+            # 4. Kolla Varningar baserat på det säkra priset
+            if ma200 > 0 and ny_kurs < ma200:
+                avvikelse = ((ny_kurs / ma200) - 1) * 100
+                ma200_varningar.append([s, namn, ticker, f"{ny_kurs:.2f}", f"{ma200:.2f}", f"{avvikelse:.1f}%"])
+                
+            print(f"✅ {ticker}: {ny_kurs} kr")
+            
             totalt_varde_strategi += (antal * ny_kurs)
             kurs_str = f"'{ny_kurs:.2f}"
             rader_att_spara.append([namn, ticker, str(antal), kurs_str])
             
-        # Spara tillbaka till fliken
         worksheet.clear()
         worksheet.append_row(["Bolagsnamn", "Ticker", "Antal", "Kurs"])
         if rader_att_spara:
@@ -102,9 +108,6 @@ def kor_automatisk_uppdatering():
             
         strategi_varden[s] = totalt_varde_strategi
 
-    # ==========================================
-    # 3. SPARA MA200-VARNINGAR TILL EN EGEN FLIK
-    # ==========================================
     print("🚨 Sparar MA200-varningar...")
     try:
         worksheet_warn = sh.worksheet("MA200_Varningar")
@@ -115,20 +118,16 @@ def kor_automatisk_uppdatering():
     worksheet_warn.append_row(["Strategi", "Bolagsnamn", "Ticker", "Kurs", "MA200", "Avvikelse"])
     if ma200_varningar:
         worksheet_warn.append_rows(ma200_varningar, value_input_option='USER_ENTERED')
-    print(f"📊 Hittade {len(ma200_varningar)} stycken aktier under MA200.")
-
-    # ==========================================
-    # 4. HÄMTA OMXSPI OCH LOGGA I HISTORIKEN
-    # ==========================================
+        
     print("📈 Hämtar dagsaktuellt OMXSPI-index...")
     omx_stangning = 0.0
     try:
         omx = yf.Ticker("^OMXSPI")
-        hist_omx = omx.history(period="1d")
+        hist_omx = omx.history(period="5d").dropna(subset=['Close'])
         if not hist_omx.empty:
             omx_stangning = round(float(hist_omx['Close'].iloc[-1]), 2)
-    except Exception as e:
-        print(f"❌ Kunde inte hämta OMXSPI: {e}")
+    except:
+        pass
 
     v_val = strategi_varden.get("Value", 0.0)
     v_utd = strategi_varden.get("Utdelning", 0.0)
@@ -154,12 +153,7 @@ def kor_automatisk_uppdatering():
         worksheet_hist.update_cell(found_row, 6, f"'{omx_stangning:.2f}")
     else:
         worksheet_hist.append_row([
-            datum_str, 
-            f"'{v_val:.2f}", 
-            f"'{v_utd:.2f}", 
-            f"'{v_mom:.2f}", 
-            f"'{total_portfolj:.2f}", 
-            f"'{omx_stangning:.2f}"
+            datum_str, f"'{v_val:.2f}", f"'{v_utd:.2f}", f"'{v_mom:.2f}", f"'{total_portfolj:.2f}", f"'{omx_stangning:.2f}"
         ], value_input_option='USER_ENTERED')
         
     print("🎉 Automatiseringen kördes utan problem!")
