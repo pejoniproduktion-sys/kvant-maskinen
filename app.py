@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.2", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.3", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -154,7 +154,10 @@ for s in strategier:
         df['Ticker'] = df['Ticker'].astype(str).str.upper().str.strip()
         df['Bolagsnamn'] = df['Bolagsnamn'].astype(str).str.strip()
         df['Antal'] = pd.to_numeric(df['Antal'].astype(str).str.replace("'", "", regex=False).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0).astype(int)
-        df['Kurs'] = pd.to_numeric(df['Kurs'].astype(str).str.replace("'", "", regex=False).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0.0).astype(float)
+        
+        # Städa kursen extra noggrant ifall Yahoo har läckt in "nan"
+        clean_kurs = df['Kurs'].astype(str).str.lower().str.replace("'", "", regex=False).str.replace(r'\s+', '', regex=True).str.replace(',', '.').replace('nan', '0')
+        df['Kurs'] = pd.to_numeric(clean_kurs, errors='coerce').fillna(0.0).astype(float)
         
         df = df[~df['Ticker'].isin(['', 'NAN', 'NaN', 'nan', 'None'])]
         st.session_state[f'bef_portfolj_{s}'] = df.reset_index(drop=True)
@@ -222,7 +225,6 @@ def ladda_och_tvatta_basdata(fil):
 if meny_val == "📊 Översikt & Historik":
     st.title("📊 Portföljöversikt & Dashboard")
     
-    # 🟢🔴 TRAFIKLJUS FÖR MA200 HÖGST UPP PÅ STARTSIDAN
     auto_warn_df = ladda_automatisk_ma200_gspread()
     if auto_warn_df.empty:
         st.success("🟢 **Trendindikator (MA200):** Alla dina innehav handlas just nu över sin långsiktiga trend (MA200).")
@@ -247,29 +249,20 @@ if meny_val == "📊 Översikt & Historik":
             senaste_rad = temp_hist.iloc[-1]
             
             if tidsperiod == "Dagsutveckling":
-                if len(temp_hist) >= 2:
-                    start_row = temp_hist.iloc[-2]
-                else:
-                    start_row = temp_hist.iloc[0]
+                if len(temp_hist) >= 2: start_row = temp_hist.iloc[-2]
+                else: start_row = temp_hist.iloc[0]
             else:
-                if tidsperiod == "1 Månad":
-                    start_date = senaste_datum - pd.DateOffset(days=30)
-                elif tidsperiod == "I år (YTD)":
-                    start_date = pd.to_datetime(f"{senaste_datum.year}-01-01")
-                elif tidsperiod == "1 År":
-                    start_date = senaste_datum - pd.DateOffset(days=365)
-                else:
-                    start_date = temp_hist['datum_dt'].iloc[0]
+                if tidsperiod == "1 Månad": start_date = senaste_datum - pd.DateOffset(days=30)
+                elif tidsperiod == "I år (YTD)": start_date = pd.to_datetime(f"{senaste_datum.year}-01-01")
+                elif tidsperiod == "1 År": start_date = senaste_datum - pd.DateOffset(days=365)
+                else: start_date = temp_hist['datum_dt'].iloc[0]
 
                 past_data = temp_hist[temp_hist['datum_dt'] <= start_date]
-                if past_data.empty:
-                    start_row = temp_hist.iloc[0]
-                else:
-                    start_row = past_data.iloc[-1]
+                if past_data.empty: start_row = temp_hist.iloc[0]
+                else: start_row = past_data.iloc[-1]
 
             def calc_ret(nu, da):
-                if float(da) > 0:
-                    return ((float(nu) / float(da)) - 1) * 100
+                if float(da) > 0: return ((float(nu) / float(da)) - 1) * 100
                 return 0.0
 
             ret_tot = calc_ret(senaste_rad['portfolj_varde'], start_row['portfolj_varde'])
@@ -278,18 +271,17 @@ if meny_val == "📊 Översikt & Historik":
             ret_mom = calc_ret(senaste_rad['varde_momentum'], start_row['varde_momentum'])
             ret_omx = calc_ret(senaste_rad['omx_index'], start_row['omx_index'])
             
-            # BERÄKNA DYNAMISKT ALFA OCH LÄGG TILL I KOLUMNERNA
             alfa = ret_tot - ret_omx
             
-            # RAD 1: Övergripande portfölj och Index
+            # RAD 1
             c1, c2, c3 = st.columns(3)
             c1.metric("💼 Total Portfölj", f"{senaste_rad['portfolj_varde']:,.0f} kr".replace(',', ' '), f"{ret_tot:+.1f} %")
             c2.metric("🏆 Alfa (vs Index)", f"{alfa:+.1f} %-enh.", f"{alfa:+.1f}")
             c3.metric("📊 OMXSPI", f"{senaste_rad['omx_index']:,.0f}".replace(',', ' '), f"{ret_omx:+.1f} %")
             
-            st.write("") # Skapar lite snygg luft mellan raderna
+            st.write("") 
             
-            # RAD 2: De specifika strategierna
+            # RAD 2
             c4, c5, c6 = st.columns(3)
             c4.metric("📈 Value", f"{senaste_rad['varde_value']:,.0f} kr".replace(',', ' '), f"{ret_val:+.1f} %")
             c5.metric("💸 Utdelning", f"{senaste_rad['varde_utdelning']:,.0f} kr".replace(',', ' '), f"{ret_utd:+.1f} %")
@@ -311,7 +303,6 @@ if meny_val == "📊 Översikt & Historik":
     
     st.markdown("---")
     
-    # KNAPPEN FÖR MANUELL LOGGNING (FLYTTAD LÄNGST NER SOM BACKUP)
     with st.expander("⚙️ Nödverktyg: Logga värde per kvantstrategi manuellt"):
         st.info("Din dagliga robot gör detta automatiskt kl 18:00 varje kväll, men du kan använda detta formulär om du vill logga data manuellt mitt på dagen.")
         with st.form("logga_varde"):
@@ -335,7 +326,6 @@ if meny_val == "📊 Översikt & Historik":
                         else: st.error("Kunde inte hitta indexkurs.")
                     except Exception as e: st.error(f"Fel: {e}")
 
-
 # --- SIDA 2: PORTFÖLJANALYS & RÅDGIVARE ---
 elif meny_val == "🧠 Portföljanalys & Råd":
     st.title("🧠 Portföljanalys & AI-Rådgivare")
@@ -345,7 +335,6 @@ elif meny_val == "🧠 Portföljanalys & Råd":
         st.subheader("🤖 Månadens Kvant-forskning (AI)")
         if ai_datum:
             st.caption(f"🗓️ {ai_datum}")
-            # MINIMERAD EXPANDER (expanded=False)
             with st.expander("Läs månadens marknadsanalys", expanded=False):
                 st.markdown(ai_text)
         else:
@@ -367,7 +356,8 @@ elif meny_val == "🧠 Portföljanalys & Råd":
                         yf_ticker = t.replace(" ", "-") if "." in t.replace(" ", "-") else f"{t.replace(' ', '-')}.ST"
                         try:
                             aktie = yf.Ticker(yf_ticker)
-                            hist = aktie.history(period="1y")
+                            # Rensa NaN för säkerhets skull
+                            hist = aktie.history(period="1y").dropna(subset=['Close'])
                             if len(hist) > 150:
                                 ma200 = hist['Close'].tail(200).mean()
                                 senaste_kurs = hist['Close'].iloc[-1]
@@ -512,8 +502,12 @@ elif meny_val == "💼 Min Portfölj":
                     yf_ticker = t if "." in t else f"{t}.ST"
                     try:
                         aktie = yf.Ticker(yf_ticker)
-                        hist = aktie.history(period="1d")
-                        if not hist.empty: temp_bef.at[idx, 'Kurs'] = round(float(hist['Close'].iloc[-1]), 2)
+                        # Använder 1mo och droppar NaN för maximal driftsäkerhet
+                        hist = aktie.history(period="1mo").dropna(subset=['Close'])
+                        if not hist.empty: 
+                            ny_kurs = round(float(hist['Close'].iloc[-1]), 2)
+                            if ny_kurs > 0 and not pd.isna(ny_kurs):
+                                temp_bef.at[idx, 'Kurs'] = ny_kurs
                     except: pass
                 st.session_state[f'bef_portfolj_{vald}'] = temp_bef
                 st.success("Live-kurser hämtade!")
