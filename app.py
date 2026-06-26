@@ -341,13 +341,17 @@ elif meny_val == "🧠 Portföljanalys & Råd":
             
     st.markdown("---")
 
-    # === NY SEKTION: MATEMATISK RISKANALYS ===
+    # === NY SEKTION: MATEMATISK RISKANALYS MED PEDAGOGISK TEXT ===
     st.subheader("🛡️ Avancerad Riskanalys & Nyckeltal")
     
     hist_df = ladda_historik_gspread()
     if len(hist_df) >= 5:
         with st.expander("🔗 Strategiernas Inbördes Korrelation (Samsvar)", expanded=True):
-            st.write("Visar om dina strategier balanserar varandra. Ett värde nära 1.0 betyder att de rör sig exakt likadant. Ett lägre värde (under 0.7) är optimalt för riskspridning.")
+            st.markdown("""
+            **💡 Enkel förklaring:** Tanken med att ha tre olika strategier är att de ska fungera som krockkuddar för varandra. Om börsen straffar *Value-aktier*, vill vi att *Momentum-aktierna* står emot fallet.
+            * **Nära 1.0:** Strategierna beter sig som tvillingar. Går den ena ner, dras den andra med (Dåligt skydd).
+            * **Under 0.7:** Strategierna går sin egen väg och balanserar upp varandra på ett bra sätt (Bra skydd!).
+            """)
             try:
                 corr_df = hist_df[['varde_value', 'varde_utdelning', 'varde_momentum']].pct_change().corr()
                 corr_df.columns = ['Value (Värde)', 'Utdelning', 'Momentum']
@@ -356,7 +360,14 @@ elif meny_val == "🧠 Portföljanalys & Råd":
             except:
                 st.warning("Kunde inte beräkna korrelation. Kräver mer historisk data i arket.")
 
-    st.write("Hämta avancerade riskmått (Annualiserad Volatilitet och Sharpekvot) för varje enskild aktie i dina portföljer baserat på det senaste årets handelsdata.")
+    st.markdown("""
+    **💡 Vad betyder riskmåtten för aktierna nedan?**
+    * 📉 **Årlig Volatilitet:** Hur "stökig" är aktien? Hög procent (%) betyder att aktiens pris åker en vild berg-och-dalbana. Låg procent betyder en lugn och stabil tågresa.
+    * 🏆 **Sharpekvot:** Är vinsten värd risken (magontet)? 
+        * **Under 1.0:** Nja, du tar mycket risk för relativt lite vinst.
+        * **Över 1.0:** Bra! Du får en fin vinst i förhållande till risken.
+        * **Över 2.0:** Exceptionellt! Hög vinst med väldigt lite dramatik.
+    """)
     if st.button("📊 Beräkna risknyckeltal för innehav", type="secondary"):
         with st.spinner("Hämtar historisk data och beräknar riskmått..."):
             risk_data = []
