@@ -394,12 +394,15 @@ elif meny_val == "🧠 Portföljanalys & Råd":
                                     "Aktie": row['Bolagsnamn'],
                                     "Årlig Volatilitet": f"{vol:.1f}% ({vol_status})",
                                     "Sharpe (Rf=3%)": f"{round(sharpe, 2)} ({sharpe_status})",
-                                    "1-Års Avkastning": f"{ann_ret:+.1f} %"
+                                    "1-Års Avkastning": f"{ann_ret:+.1f} %",
+                                    "_sort_sharpe": sharpe
                                 })
                         except: pass
             
             if risk_data:
-                st.dataframe(pd.DataFrame(risk_data).sort_values(by="Sharpekvot (Rf=3%)", ascending=False).reset_index(drop=True), use_container_width=True)
+                df_risk = pd.DataFrame(risk_data)
+                df_risk = df_risk.sort_values(by="_sort_sharpe", ascending=False).drop(columns=["_sort_sharpe"]).reset_index(drop=True)
+                st.dataframe(df_risk, use_container_width=True)
                 
                 st.markdown("---")
                 st.info("💡 **Kort sagt - Hur ska du läsa dessa siffror?**")
