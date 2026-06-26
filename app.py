@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.3", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.4", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -155,7 +155,6 @@ for s in strategier:
         df['Bolagsnamn'] = df['Bolagsnamn'].astype(str).str.strip()
         df['Antal'] = pd.to_numeric(df['Antal'].astype(str).str.replace("'", "", regex=False).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0).astype(int)
         
-        # Städa kursen extra noggrant ifall Yahoo har läckt in "nan"
         clean_kurs = df['Kurs'].astype(str).str.lower().str.replace("'", "", regex=False).str.replace(r'\s+', '', regex=True).str.replace(',', '.').replace('nan', '0')
         df['Kurs'] = pd.to_numeric(clean_kurs, errors='coerce').fillna(0.0).astype(float)
         
@@ -332,14 +331,63 @@ elif meny_val == "🧠 Portföljanalys & Råd":
     
     ai_datum, ai_text = ladda_ai_analys_gspread()
     with st.container():
-        st.subheader("🤖 Månadens Kvant-forskning (AI)")
+        st.subheader("🤖 Månadens Kvant-forskning (AI & Portföljgranskning)")
         if ai_datum:
             st.caption(f"🗓️ {ai_datum}")
-            with st.expander("Läs månadens marknadsanalys", expanded=False):
+            with st.expander("Läs månadens marknadsanalys & rannsakning", expanded=False):
                 st.markdown(ai_text)
         else:
             st.info(ai_text)
             
+    st.markdown("---")
+
+    # === NY SEKTION: MATEMATISK RISKANALYS ===
+    st.subheader("🛡️ Avancerad Riskanalys & Nyckeltal")
+    
+    hist_df = ladda_historik_gspread()
+    if len(hist_df) >= 5:
+        with st.expander("🔗 Strategiernas Inbördes Korrelation (Samsvar)", expanded=True):
+            st.write("Visar om dina strategier balanserar varandra. Ett värde nära 1.0 betyder att de rör sig exakt likadant. Ett lägre värde (under 0.7) är optimalt för riskspridning.")
+            try:
+                corr_df = hist_df[['varde_value', 'varde_utdelning', 'varde_momentum']].pct_change().corr()
+                corr_df.columns = ['Value (Värde)', 'Utdelning', 'Momentum']
+                corr_df.index = ['Value (Värde)', 'Utdelning', 'Momentum']
+                st.dataframe(corr_df.style.background_gradient(cmap='coolwarm', axis=None).format("{:.2f}"), use_container_width=True)
+            except:
+                st.warning("Kunde inte beräkna korrelation. Kräver mer historisk data i arket.")
+
+    st.write("Hämta avancerade riskmått (Annualiserad Volatilitet och Sharpekvot) för varje enskild aktie i dina portföljer baserat på det senaste årets handelsdata.")
+    if st.button("📊 Beräkna risknyckeltal för innehav", type="secondary"):
+        with st.spinner("Hämtar historisk data och beräknar riskmått..."):
+            risk_data = []
+            for s in strategier:
+                df = st.session_state[f'bef_portfolj_{s}']
+                for _, row in df.iterrows():
+                    t = str(row['Ticker']).upper().strip()
+                    if t and t != 'KASSA':
+                        yf_ticker = t.replace(" ", "-") if "." in t.replace(" ", "-") else f"{t.replace(' ', '-')}.ST"
+                        try:
+                            aktie = yf.Ticker(yf_ticker)
+                            hist = aktie.history(period="1y").dropna(subset=['Close'])
+                            if len(hist) > 30:
+                                returns = hist['Close'].pct_change().dropna()
+                                vol = returns.std() * np.sqrt(252) * 100 
+                                ann_ret = (hist['Close'].iloc[-1] / hist['Close'].iloc[0] - 1) * 100
+                                sharpe = (ann_ret - 3.0) / vol if vol > 0 else 0
+                                risk_data.append({
+                                    "Strategi": s,
+                                    "Aktie": row['Bolagsnamn'],
+                                    "Ticker": t,
+                                    "Årlig Volatilitet": f"{vol:.1f} %",
+                                    "1-Års Avkastning": f"{ann_ret:+.1f} %",
+                                    "Sharpekvot (Rf=3%)": round(sharpe, 2)
+                                })
+                        except: pass
+            if risk_data:
+                st.dataframe(pd.DataFrame(risk_data).sort_values(by="Sharpekvot (Rf=3%)", ascending=False).reset_index(drop=True), use_container_width=True)
+            else:
+                st.warning("Hittade inga aktiva innehav att analysera.")
+
     st.markdown("---")
     
     st.subheader("🚨 Trendbevakning (Manuell MA200-scanning)")
@@ -356,7 +404,6 @@ elif meny_val == "🧠 Portföljanalys & Råd":
                         yf_ticker = t.replace(" ", "-") if "." in t.replace(" ", "-") else f"{t.replace(' ', '-')}.ST"
                         try:
                             aktie = yf.Ticker(yf_ticker)
-                            # Rensa NaN för säkerhets skull
                             hist = aktie.history(period="1y").dropna(subset=['Close'])
                             if len(hist) > 150:
                                 ma200 = hist['Close'].tail(200).mean()
@@ -421,7 +468,6 @@ elif meny_val == "🧠 Portföljanalys & Råd":
             if diff > 5: st.warning(f"📉 **Sänk {bd['Strategi']}:** Du har en övervikt. Överväg att skala ner med ca **{abs(kr_diff):,.0f} kr** vid nästa ombalansering.")
             elif diff < -5: st.info(f"📈 **Öka {bd['Strategi']}:** Du är underviktad gentemot målvikt. Överväg att tillföra ca **{kr_diff:,.0f} kr**.")
         
-        hist_df = ladda_historik_gspread()
         if len(hist_df) >= 2:
             st.markdown("---")
             st.subheader("🏆 Din Prestation (Alfa - Total Utveckling)")
@@ -502,7 +548,6 @@ elif meny_val == "💼 Min Portfölj":
                     yf_ticker = t if "." in t else f"{t}.ST"
                     try:
                         aktie = yf.Ticker(yf_ticker)
-                        # Använder 1mo och droppar NaN för maximal driftsäkerhet
                         hist = aktie.history(period="1mo").dropna(subset=['Close'])
                         if not hist.empty: 
                             ny_kurs = round(float(hist['Close'].iloc[-1]), 2)
