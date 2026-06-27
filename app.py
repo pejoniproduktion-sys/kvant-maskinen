@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.5", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.6", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -706,14 +706,50 @@ elif "Strategi" in meny_val:
                 df['Momentum'] = (pd.to_numeric(df[k_3m], errors='coerce').fillna(0) + pd.to_numeric(df[k_6m], errors='coerce').fillna(0) + pd.to_numeric(df[k_12m], errors='coerce').fillna(0)) / 3
                 topp = df.sort_values(by='Momentum', ascending=False).head(10)
 
-            st.subheader("🚀 Topp 10 Köpkandidater")
-            st.dataframe(topp[[k_namn, k_tick, k_kurs, 'Momentum']].reset_index(drop=True), use_container_width=True)
+        # HÄR BÖRJAR BERÄKNINGEN AV RISK FÖR KÖPKANDIDATERNA
+        with st.spinner("Beräknar riskmått (Volatilitet & Sharpe) för Topp 10-kandidaterna..."):
+            topp_risk = topp.copy()
+            vol_list = []
+            sharpe_list = []
             
-            if st.button("⚡ Skicka Topp 10 till Ombalansering"):
-                st.session_state['mal_portfolj'] = topp[[k_namn, k_tick, k_kurs]].rename(columns={k_namn:"Bolagsnamn", k_tick:"Ticker", k_kurs:"Kurs"}).reset_index(drop=True)
-                st.session_state['aktiv_strategi'] = strat_typ
-                st.session_state['ombalansering_beraknad'] = False
-                st.success("Målaktier sparade! Gå till Ombalanserings-sidan.")
+            for _, row in topp_risk.iterrows():
+                t = str(row[k_tick]).upper().strip()
+                yf_ticker = t.replace(" ", "-") if "." in t.replace(" ", "-") else f"{t.replace(' ', '-')}.ST"
+                vol_str = "N/A"
+                sharpe_str = "N/A"
+                try:
+                    aktie = yf.Ticker(yf_ticker)
+                    hist = aktie.history(period="1y").dropna(subset=['Close'])
+                    if len(hist) > 30:
+                        returns = hist['Close'].pct_change().dropna()
+                        vol = returns.std() * np.sqrt(252) * 100 
+                        ann_ret = (hist['Close'].iloc[-1] / hist['Close'].iloc[0] - 1) * 100
+                        sharpe = (ann_ret - 3.0) / vol if vol > 0 else 0
+                        
+                        vol_status = "🟢 Stabil" if vol < 25 else ("🟡 Volatil" if vol < 40 else "🔴 Mycket orolig")
+                        sharpe_status = "🟢 Utmärkt" if sharpe > 1.5 else ("🟡 Bra" if sharpe > 0.5 else "🔴 Svag")
+                        
+                        vol_str = f"{vol:.1f}% ({vol_status})"
+                        sharpe_str = f"{round(sharpe, 2)} ({sharpe_status})"
+                except:
+                    pass
+                
+                vol_list.append(vol_str)
+                sharpe_list.append(sharpe_str)
+                
+            topp_risk['Årlig Volatilitet'] = vol_list
+            topp_risk['Sharpe (Rf=3%)'] = sharpe_list
+
+        st.subheader("🚀 Topp 10 Köpkandidater (inkl. Riskanalys)")
+        
+        display_cols = [k_namn, k_tick, k_kurs, 'Momentum', 'Årlig Volatilitet', 'Sharpe (Rf=3%)']
+        st.dataframe(topp_risk[display_cols].reset_index(drop=True), use_container_width=True)
+        
+        if st.button("⚡ Skicka Topp 10 till Ombalansering"):
+            st.session_state['mal_portfolj'] = topp_risk[[k_namn, k_tick, k_kurs]].rename(columns={k_namn:"Bolagsnamn", k_tick:"Ticker", k_kurs:"Kurs"}).reset_index(drop=True)
+            st.session_state['aktiv_strategi'] = strat_typ
+            st.session_state['ombalansering_beraknad'] = False
+            st.success("Målaktier sparade! Gå till Ombalanserings-sidan.")
     else: st.warning("👈 Vänligen ladda upp din Börsdata-export i sidomenyn.")
 
 # --- SIDA 9: OMBALANSERING ---
