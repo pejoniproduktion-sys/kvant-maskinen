@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.6", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.7", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -272,19 +272,19 @@ if meny_val == "📊 Översikt & Historik":
             
             alfa = ret_tot - ret_omx
             
-            # RAD 1
+            # RAD 1 (Nu med :.2f för två decimaler)
             c1, c2, c3 = st.columns(3)
-            c1.metric("💼 Total Portfölj", f"{senaste_rad['portfolj_varde']:,.0f} kr".replace(',', ' '), f"{ret_tot:+.1f} %")
-            c2.metric("🏆 Alfa (vs Index)", f"{alfa:+.1f} %-enh.", f"{alfa:+.1f}")
-            c3.metric("📊 OMXSPI", f"{senaste_rad['omx_index']:,.0f}".replace(',', ' '), f"{ret_omx:+.1f} %")
+            c1.metric("💼 Total Portfölj", f"{senaste_rad['portfolj_varde']:,.0f} kr".replace(',', ' '), f"{ret_tot:+.2f} %")
+            c2.metric("🏆 Alfa (vs Index)", f"{alfa:+.2f} %-enh.", f"{alfa:+.2f}")
+            c3.metric("📊 OMXSPI", f"{senaste_rad['omx_index']:,.0f}".replace(',', ' '), f"{ret_omx:+.2f} %")
             
             st.write("") 
             
-            # RAD 2
+            # RAD 2 (Nu med :.2f för två decimaler)
             c4, c5, c6 = st.columns(3)
-            c4.metric("📈 Value", f"{senaste_rad['varde_value']:,.0f} kr".replace(',', ' '), f"{ret_val:+.1f} %")
-            c5.metric("💸 Utdelning", f"{senaste_rad['varde_utdelning']:,.0f} kr".replace(',', ' '), f"{ret_utd:+.1f} %")
-            c6.metric("⚡ Momentum", f"{senaste_rad['varde_momentum']:,.0f} kr".replace(',', ' '), f"{ret_mom:+.1f} %")
+            c4.metric("📈 Value", f"{senaste_rad['varde_value']:,.0f} kr".replace(',', ' '), f"{ret_val:+.2f} %")
+            c5.metric("💸 Utdelning", f"{senaste_rad['varde_utdelning']:,.0f} kr".replace(',', ' '), f"{ret_utd:+.2f} %")
+            c6.metric("⚡ Momentum", f"{senaste_rad['varde_momentum']:,.0f} kr".replace(',', ' '), f"{ret_mom:+.2f} %")
             
             st.markdown("---")
             
