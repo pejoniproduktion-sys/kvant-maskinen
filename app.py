@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.7", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.8", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -169,6 +169,8 @@ if 'aktiv_strategi' not in st.session_state:
     st.session_state['aktiv_strategi'] = "Value"
 if 'ombalansering_beraknad' not in st.session_state: 
     st.session_state['ombalansering_beraknad'] = False
+if 'senast_uppdaterad_kurser' not in st.session_state:
+    st.session_state['senast_uppdaterad_kurser'] = "Ej uppdaterat denna session"
 
 def hamta_malviktning(manad):
     if manad in [11, 12, 1]: return {"Value": 0.50, "Utdelning": 0.30, "Momentum": 0.20}
@@ -239,13 +241,16 @@ if meny_val == "📊 Översikt & Historik":
         st.subheader("📈 Utveckling jämfört med OMXSPI")
         
         if len(hist_df) >= 2:
-            tidsperiod = st.radio("⏳ Välj tidsperiod för avkastning:", ["Dagsutveckling", "1 Månad", "I år (YTD)", "1 År", "Total Utveckling"], index=4, horizontal=True)
-            st.write("") 
-            
             temp_hist = hist_df.copy()
             temp_hist['datum_dt'] = pd.to_datetime(temp_hist['datum'])
             senaste_datum = temp_hist['datum_dt'].iloc[-1]
             senaste_rad = temp_hist.iloc[-1]
+            
+            # --- NYTT: Tydlig datumstämpel för utvecklingen ---
+            st.caption(f"🕒 Statusuppdatering: Utveckling per stängning **{senaste_datum.strftime('%Y-%m-%d')}**")
+            
+            tidsperiod = st.radio("⏳ Välj tidsperiod för avkastning:", ["Dagsutveckling", "1 Månad", "I år (YTD)", "1 År", "Total Utveckling"], index=4, horizontal=True)
+            st.write("") 
             
             if tidsperiod == "Dagsutveckling":
                 if len(temp_hist) >= 2: start_row = temp_hist.iloc[-2]
@@ -272,7 +277,7 @@ if meny_val == "📊 Översikt & Historik":
             
             alfa = ret_tot - ret_omx
             
-            # RAD 1 (Nu med :.2f för två decimaler)
+            # RAD 1 
             c1, c2, c3 = st.columns(3)
             c1.metric("💼 Total Portfölj", f"{senaste_rad['portfolj_varde']:,.0f} kr".replace(',', ' '), f"{ret_tot:+.2f} %")
             c2.metric("🏆 Alfa (vs Index)", f"{alfa:+.2f} %-enh.", f"{alfa:+.2f}")
@@ -280,7 +285,7 @@ if meny_val == "📊 Översikt & Historik":
             
             st.write("") 
             
-            # RAD 2 (Nu med :.2f för två decimaler)
+            # RAD 2 
             c4, c5, c6 = st.columns(3)
             c4.metric("📈 Value", f"{senaste_rad['varde_value']:,.0f} kr".replace(',', ' '), f"{ret_val:+.2f} %")
             c5.metric("💸 Utdelning", f"{senaste_rad['varde_utdelning']:,.0f} kr".replace(',', ' '), f"{ret_utd:+.2f} %")
@@ -341,7 +346,6 @@ elif meny_val == "🧠 Portföljanalys & Råd":
             
     st.markdown("---")
 
-    # === NY SEKTION: MATEMATISK RISKANALYS MED PEDAGOGISK TOLKNING ===
     st.subheader("🛡️ Avancerad Riskanalys & Nyckeltal")
     
     hist_df = ladda_historik_gspread()
@@ -514,6 +518,10 @@ elif meny_val == "🧠 Portföljanalys & Råd":
 # --- SIDA 3: MIN PORTFÖLJ ---
 elif meny_val == "💼 Min Portfölj":
     st.title("💼 Mina Befintliga Portföljer")
+    
+    # --- NYTT: Tydlig tidsstämpel för när Live-kurserna senast hämtades in i appen ---
+    st.caption(f"🕒 Live-kurser senast uppdaterade: **{st.session_state['senast_uppdaterad_kurser']}**")
+    
     vald = st.selectbox("Välj portfölj att hantera:", strategier, index=strategier.index(st.session_state['aktiv_strategi']))
     st.session_state['aktiv_strategi'] = vald 
     st.dataframe(st.session_state[f'bef_portfolj_{vald}'], use_container_width=True)
@@ -582,6 +590,7 @@ elif meny_val == "💼 Min Portfölj":
                                 temp_bef.at[idx, 'Kurs'] = ny_kurs
                     except: pass
                 st.session_state[f'bef_portfolj_{vald}'] = temp_bef
+                st.session_state['senast_uppdaterad_kurser'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 st.success("Live-kurser hämtade!")
                 st.rerun()
     with b2:
@@ -593,6 +602,7 @@ elif meny_val == "💼 Min Portfölj":
                 t = str(row['Ticker']).upper().strip()
                 if t in kurs_dict and t != 'KASSA': temp_bef.at[idx, 'Kurs'] = float(kurs_dict[t])
             st.session_state[f'bef_portfolj_{vald}'] = temp_bef
+            st.session_state['senast_uppdaterad_kurser'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             st.success("Kurserna har uppdaterats från fil!")
             st.rerun()
     with b3:
@@ -706,7 +716,6 @@ elif "Strategi" in meny_val:
                 df['Momentum'] = (pd.to_numeric(df[k_3m], errors='coerce').fillna(0) + pd.to_numeric(df[k_6m], errors='coerce').fillna(0) + pd.to_numeric(df[k_12m], errors='coerce').fillna(0)) / 3
                 topp = df.sort_values(by='Momentum', ascending=False).head(10)
 
-        # HÄR BÖRJAR BERÄKNINGEN AV RISK FÖR KÖPKANDIDATERNA
         with st.spinner("Beräknar riskmått (Volatilitet & Sharpe) för Topp 10-kandidaterna..."):
             topp_risk = topp.copy()
             vol_list = []
