@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.8", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.9", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -133,6 +133,33 @@ def ladda_automatisk_ma200_gspread():
     except:
         return pd.DataFrame()
 
+def radera_varning_gspread(ticker):
+    try:
+        gc = get_gspread_client()
+        sh = gc.open_by_url(st.secrets["google_sheet_url"])
+        worksheet = sh.worksheet("MA200_Varningar")
+        
+        data = worksheet.get_all_values()
+        if not data: return False
+        
+        headers = data[0]
+        if "Ticker" not in headers: return False
+        ticker_col_idx = headers.index("Ticker")
+        
+        rows_to_delete = []
+        for i, row in enumerate(data):
+            if i > 0 and len(row) > ticker_col_idx:
+                if str(row[ticker_col_idx]).strip().upper() == str(ticker).strip().upper():
+                    rows_to_delete.append(i + 1) # +1 för att Google Sheets börjar på rad 1
+        
+        # Radera baklänges för att inte rubba indexen
+        for r in reversed(rows_to_delete):
+            worksheet.delete_rows(r)
+            
+        return len(rows_to_delete) > 0
+    except:
+        return False
+
 # ==========================================
 # 2. GLOBAL DATASANERING & SESSION STATE
 # ==========================================
@@ -231,9 +258,22 @@ if meny_val == "📊 Översikt & Historik":
         st.success("🟢 **Trendindikator (MA200):** Alla dina innehav handlas just nu över sin långsiktiga trend (MA200).")
     else:
         st.error(f"🔴 **Trendindikator (MA200):** {len(auto_warn_df)} aktier handlas just nu under sin långsiktiga trend!")
-        with st.expander("Visa varningslista 🚨", expanded=False):
-            st.dataframe(auto_warn_df, use_container_width=True)
-            st.info("💡 Överväg att sälja av dessa innehav och placera kapitalet i kassa under 'Min Portfölj' fram till nästa ordinarie ombalansering.")
+        with st.expander("Visa varningslista 🚨", expanded=True):
+            st.info("💡 När du har sålt en aktie eller uppmärksammat varningen kan du klicka på 'Kvittera' nedan för att dölja den från listan.")
+            
+            for idx, row in auto_warn_df.iterrows():
+                aktie = row.get('Aktie', 'Okänd')
+                ticker = row.get('Ticker', '-')
+                avv = row.get('Avvikelse', '-')
+                
+                c1, c2, c3 = st.columns([3, 3, 2])
+                c1.write(f"**{aktie}** ({ticker})")
+                c2.write(f"Avvikelse: {avv}")
+                
+                if c3.button("✅ Kvittera (Dölj)", key=f"kvitt_{ticker}_{idx}"):
+                    with st.spinner("Döljer varning..."):
+                        radera_varning_gspread(ticker)
+                        st.rerun()
 
     hist_df = ladda_historik_gspread()
     if len(hist_df) >= 1:
@@ -246,7 +286,6 @@ if meny_val == "📊 Översikt & Historik":
             senaste_datum = temp_hist['datum_dt'].iloc[-1]
             senaste_rad = temp_hist.iloc[-1]
             
-            # --- NYTT: Tydlig datumstämpel för utvecklingen ---
             st.caption(f"🕒 Statusuppdatering: Utveckling per stängning **{senaste_datum.strftime('%Y-%m-%d')}**")
             
             tidsperiod = st.radio("⏳ Välj tidsperiod för avkastning:", ["Dagsutveckling", "1 Månad", "I år (YTD)", "1 År", "Total Utveckling"], index=4, horizontal=True)
@@ -519,7 +558,6 @@ elif meny_val == "🧠 Portföljanalys & Råd":
 elif meny_val == "💼 Min Portfölj":
     st.title("💼 Mina Befintliga Portföljer")
     
-    # --- NYTT: Tydlig tidsstämpel för när Live-kurserna senast hämtades in i appen ---
     st.caption(f"🕒 Live-kurser senast uppdaterade: **{st.session_state['senast_uppdaterad_kurser']}**")
     
     vald = st.selectbox("Välj portfölj att hantera:", strategier, index=strategier.index(st.session_state['aktiv_strategi']))
