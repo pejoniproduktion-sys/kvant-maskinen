@@ -45,17 +45,30 @@ def hamta_aktuella_innehav(sh):
         return "Inga aktieinnehav hittades i portföljen just nu."
     return portfolj_text
 
+def hamta_malviktning_text(manad):
+    if manad in [11, 12, 1]: 
+        return "Fokus: Värdestrategi (Value). Målvikt: 50% Value, 30% Utdelning, 20% Momentum. (Motivering: Bästa möjliga miljö för Värdebolag inför och under januari-effekten)."
+    elif manad in [2, 3, 4]: 
+        return "Fokus: Utdelning & Momentum. Målvikt: 20% Value, 40% Utdelning, 40% Momentum. (Motivering: Utdelningssäsong och kapitalrotation inför X-dagar)."
+    elif manad in [5, 6, 7, 8]: 
+        return "Fokus: Marknadens Vakuum (Defensivt). Målvikt: 30% Value, 30% Utdelning, 40% Momentum. (Motivering: 'Sell in May and go away', ofta låg likviditet och risk för stökig börs)."
+    else: 
+        return "Fokus: Momentum. Målvikt: 20% Value, 20% Utdelning, 60% Momentum. (Motivering: Likviditeten är tillbaka efter sommaren, nya starka trender etableras)."
+
 def run_research():
-    print(f"🔍 Startar månadens Kvant-forskning: {datetime.now().strftime('%Y-%m-%d')}")
-    manad_ar = datetime.now().strftime("%B %Y")
+    now = datetime.now()
+    manad_siffra = now.month
+    manad_ar = now.strftime("%B %Y")
+    print(f"🔍 Startar månadens Kvant-forskning: {now.strftime('%Y-%m-%d')}")
     
     gc = get_gspread_client()
     sh = gc.open_by_url(os.environ["GOOGLE_SHEET_URL"])
 
     # ==========================================
-    # 2. HÄMTA PORTFÖLJ & SÖK PÅ INTERNET
+    # 2. HÄMTA PORTFÖLJ, SÄSONG & SÖK PÅ INTERNET
     # ==========================================
     mina_innehav = hamta_aktuella_innehav(sh)
+    sasong_text = hamta_malviktning_text(manad_siffra)
     
     print("🌐 Söker på internet efter kvant-trender...")
     query = f"Quantitative investing latest trends {manad_ar} value dividend momentum factor investing market sentiment macroeconomic outlook"
@@ -80,6 +93,9 @@ def run_research():
     Här är informationen från nätet:
     {kontext}
     
+    Här är min fastslagna säsongsstrategi och målviktning för denna månad:
+    {sasong_text}
+    
     Här är mina nuvarande aktieinnehav uppdelade per strategi:
     {mina_innehav}
     
@@ -88,9 +104,9 @@ def run_research():
     
     Strukturera din text strikt enligt följande rubriker:
     1. **Marknaden just nu:** En generell överblick av sentimentet för kvantfonder och makroläget.
-    2. **Value, Momentum & Utdelning:** Hur presterar och förväntas dessa faktorer prestera framåt enligt källorna?
-    3. **Djävulens Advokat - Portföljgranskning:** Agera som en djävulens advokat. Granska mina specifika aktieinnehav ovan utifrån det dagsfärska marknadssentimentet. Identifiera svagheter, varna för bolag eller sektorer som verkar ologiska i nuvarande makroklimat och ifrågasätt mina val objektivt.
-    4. **Konkreta Råd (Köp / Sälj / Behåll):** Ge sakliga, professionella råd kring mina specifika innehav utifrån din granskning i föregående steg. Vilka bör jag överväga att sälja av, och vilka är värda att behålla genom nuvarande börsklimat?
+    2. **Säsongsmönster & Målviktning:** Reflektera kort över om den aktuella säsongsstrategin ({sasong_text}) känns rimlig i rådande makroklimat.
+    3. **Djävulens Advokat - Portföljgranskning:** Agera som en djävulens advokat. Granska mina specifika aktieinnehav ovan utifrån både det dagsfärska marknadssentimentet OCH min aktuella säsongsstrategi. Identifiera svagheter, varna för bolag som verkar ologiska för just denna period på året, och ifrågasätt mina val objektivt.
+    4. **Konkreta Råd (Köp / Sälj / Behåll):** Ge sakliga, professionella råd kring mina specifika innehav utifrån din granskning i föregående steg.
     5. **Slutsats:** Vad bör jag som förvaltare tänka på inför min stundande ombalansering?
     
     Var objektiv, professionell och använd emojis stilfullt för att göra texten pedagogisk och lättläst.
