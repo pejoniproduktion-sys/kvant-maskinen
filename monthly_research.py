@@ -104,9 +104,9 @@ def run_research():
     
     Strukturera din text strikt enligt följande rubriker:
     1. **Marknaden just nu:** En generell överblick av sentimentet för kvantfonder och makroläget.
-    2. **Säsongsmönster & Målviktning:** Reflektera kort över om den aktuella säsongsstrategin ({sasong_text}) känns rimlig i rådande makroklimat.
-    3. **Djävulens Advokat - Portföljgranskning:** Agera som en djävulens advokat. Granska mina specifika aktieinnehav ovan utifrån både det dagsfärska marknadssentimentet OCH min aktuella säsongsstrategi. Identifiera svagheter, varna för bolag som verkar ologiska för just denna period på året, och ifrågasätt mina val objektivt.
-    4. **Konkreta Råd (Köp / Sälj / Behåll):** Ge sakliga, professionella råd kring mina specifika innehav utifrån din granskning i föregående steg.
+    2. **Säsongsmönster vs. Rådande Makro:** Min förutbestämda säsongsstrategi är: {sasong_text}. Din uppgift är att våga IFRÅGASÄTTA detta mönster. Om din dagsfärska makroanalys pekar på att marknaden befinner sig i ett helt annat läge än vad det historiska säsongsmönstret dikterar, ska du argumentera för varför (och hur) vi bör avvika från strategin och justera vikterna för att passa verkligheten.
+    3. **Djävulens Advokat - Portföljgranskning:** Granska mina specifika aktieinnehav nedan utifrån det dagsfärska marknadssentimentet och din bedömning av viktningen i punkt 2. Identifiera svagheter och varna för bolag som inte passar det aktuella klimatet.
+    4. **Konkreta Råd (Köp / Sälj / Behåll):** Ge sakliga, professionella råd kring mina specifika innehav utifrån din granskning.
     5. **Slutsats:** Vad bör jag som förvaltare tänka på inför min stundande ombalansering?
     
     Var objektiv, professionell och använd emojis stilfullt för att göra texten pedagogisk och lättläst.
