@@ -1,5 +1,6 @@
 import os
 import json
+import time  # <-- NYTT: Importerar tidshantering för att kunna pausa
 from datetime import datetime, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
@@ -158,5 +159,22 @@ def kor_automatisk_uppdatering():
         
     print("🎉 Automatiseringen kördes utan problem!")
 
+# --- NYTT: Smart loop som hanterar nätverksfel ---
 if __name__ == "__main__":
-    kor_automatisk_uppdatering()
+    max_forsok = 3
+    for forsok in range(1, max_forsok + 1):
+        try:
+            kor_automatisk_uppdatering()
+            break  # Om allt går bra, bryter vi loopen och är klara!
+        except Exception as e:
+            if "503" in str(e) or "502" in str(e) or "APIError" in str(e):
+                print(f"⚠️ Googles servrar är sega. (Försök {forsok} av {max_forsok}).")
+                if forsok < max_forsok:
+                    print("⏳ Väntar 15 sekunder innan nytt försök...")
+                    time.sleep(15)
+                else:
+                    print("🚨 Nu gav vi upp. Google är för överbelastat just nu.")
+                    raise e
+            else:
+                # Är det ett annat fel (t.ex. ett kodfel) så stannar vi direkt.
+                raise e
