@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.9", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.10", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -152,7 +152,6 @@ def radera_varning_gspread(ticker):
                 if str(row[ticker_col_idx]).strip().upper() == str(ticker).strip().upper():
                     rows_to_delete.append(i + 1) # +1 för att Google Sheets börjar på rad 1
         
-        # Radera baklänges för att inte rubba indexen
         for r in reversed(rows_to_delete):
             worksheet.delete_rows(r)
             
@@ -707,7 +706,7 @@ elif meny_val == "📖 Om Kvantstrategierna":
     st.header("📈 1. Trending Value")
     st.markdown("""
     1. Koden rankar alla godkända bolag från 1 (billigast) och uppåt på följande nyckeltal: **P/E, P/S, P/B, P/FCF, och EV/EBITDA**.
-    2. Saknas data straffas bolaget med ett högt fiktivt värde (5000) för att hamna längst ner i rankingen.
+    2. Saknas data straffas bolaget med ett högt fiktivt värde (5000) för att hamna längst ner i rankingen. Förlustbolag (negativa värden eller noll) straffas också med 5000 för att filtreras bort.
     3. De 40 absolut billigaste bolagen plockas ut.
     4. De 40 billigaste bolagen sorteras så och de 10 med bäst **Sammansatt Momentum** (snitt av 3m, 6m, 12m) väljs ut.
     """)
@@ -734,8 +733,12 @@ elif "Strategi" in meny_val:
             if strat_typ == "Value":
                 v_kols = ['P/E - Senaste', 'P/S - Senaste', 'P/B - Senaste', 'P/FCF - Senaste', 'EV/EBITDA - Senaste']
                 for k in v_kols:
-                    if k in df.columns: df[k] = pd.to_numeric(df[k], errors='coerce').fillna(5000)
-                    else: df[k] = 5000
+                    if k in df.columns: 
+                        df[k] = pd.to_numeric(df[k], errors='coerce').fillna(5000)
+                        # --- NYTT: Här straffas alla bolag som går med förlust (värde <= 0) ---
+                        df[k] = df[k].apply(lambda x: 5000 if x <= 0 else x)
+                    else: 
+                        df[k] = 5000
                     df[f'Rank_{k}'] = df[k].rank(ascending=True, method='min')
                 df['Total_Rank'] = df[[f'Rank_{k}' for k in v_kols]].sum(axis=1) / len(v_kols)
                 k_3m, k_6m, k_12m = next((c for c in df.columns if '3m' in c.lower()), df.columns[0]), next((c for c in df.columns if '6m' in c.lower()), df.columns[0]), next((c for c in df.columns if '1år' in c.lower() or '12m' in c.lower()), df.columns[0])
