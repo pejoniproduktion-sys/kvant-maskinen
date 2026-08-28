@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.11", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.12", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -221,7 +221,7 @@ meny_val = st.sidebar.radio(
     ]
 )
 st.sidebar.markdown("---")
-svartlista_input = st.sidebar.text_input("🛑 Svartlista / Exkludera (kommaseparerat)", value="", help="Skriv in tickers på bolag du vill gömma för alltid, t.ex. HUM, SBB B")
+svartlista_input = st.sidebar.text_input("🛑 Manuell Svartlista (kommaseparerat)", value="", help="Tvinga bort specifika bolag helt, t.ex. HUM, SBB B")
 svartlista = [x.strip().upper() for x in svartlista_input.split(',')] if svartlista_input.strip() else []
 st.sidebar.markdown("---")
 uppladdad_fil = st.sidebar.file_uploader("Ladda upp Börsdata-fil", type=["xlsx", "csv"])
@@ -719,7 +719,6 @@ elif "Strategi" in meny_val:
         with st.spinner("Laddar fil och applicerar eventuell Svartlista..."):
             df, k_namn, k_tick, k_kurs = ladda_och_tvatta_basdata(uppladdad_fil)
             
-            # --- NYTT: Applicera manuell svartlista ---
             if svartlista:
                 df = df[~df[k_tick].astype(str).str.upper().str.strip().isin(svartlista)].copy()
             
@@ -756,7 +755,7 @@ elif "Strategi" in meny_val:
             
             for _, row in topp_alla.iterrows():
                 if len(godkanda_kandidater) >= 10:
-                    break # Vi har våra 10 rena aktier, avbryt loopen!
+                    break 
                     
                 t = str(row[k_tick]).upper().strip()
                 yf_ticker = t.replace(" ", "-") if "." in t.replace(" ", "-") else f"{t.replace(' ', '-')}.ST"
@@ -769,14 +768,24 @@ elif "Strategi" in meny_val:
                     if len(hist) > 30:
                         returns = hist['Close'].pct_change().dropna()
                         
-                        # --- NYTT: BUD-RADAR ---
-                        # Uppköpta aktier låser fast sig vid budpriset. Volatiliteten dör.
-                        returns_30d = returns.tail(30)
-                        vol_30d = returns_30d.std() * np.sqrt(252) * 100
+                        # --- NYTT: FÖRBÄTTRAD BUD-RADAR (Stegfunktions-filtret) ---
+                        recent_21 = hist['Close'].tail(21)
+                        spread_1m = (recent_21.max() / recent_21.min()) - 1 if recent_21.min() > 0 else 1.0
                         
-                        if vol_30d < 9.0: # Extremt låg kortsiktig volatilitet = fryst aktie
-                            uppkops_varningar.append(f"🚨 **{row[k_namn]} ({t})** stoppades! Aktien har fryst i pris (30d volatilitet: {vol_30d:.1f}%). Mycket stor risk för pågående uppköpsbud.")
-                            continue # Kasta aktien och gå vidare till nästa i listan!
+                        returns_90 = returns.tail(90)
+                        max_hopp = returns_90.max() if not returns_90.empty else 0
+                        
+                        is_takeover = False
+                        if spread_1m < 0.035:
+                            is_takeover = True
+                            anledning = f"Fryst kurs (Max/Min-spread {spread_1m*100:.1f}%)"
+                        elif max_hopp > 0.15 and spread_1m < 0.09:
+                            is_takeover = True
+                            anledning = f"Misstänkt bud-hopp (+{max_hopp*100:.1f}%) följt av tak i kursen"
+                            
+                        if is_takeover:
+                            uppkops_varningar.append(f"🚨 **{row[k_namn]} ({t})** stoppades! {anledning}. Skyddar portföljen mot värdefällor/uppköpsbud.")
+                            continue 
                             
                         # Standard riskberäkning
                         vol = returns.std() * np.sqrt(252) * 100 
@@ -798,7 +807,6 @@ elif "Strategi" in meny_val:
                 
             topp_risk = pd.DataFrame(godkanda_kandidater)
 
-        # Skriv ut varningar om Bud-radarn hittade något
         if uppkops_varningar:
             st.error("⚠️ **BUD-RADARN AKTIVERADES!** Följande bolag stoppades från att nå din portfölj:")
             for varning in uppkops_varningar:
