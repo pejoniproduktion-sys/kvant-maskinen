@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.10", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.11", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -138,10 +138,8 @@ def radera_varning_gspread(ticker):
         gc = get_gspread_client()
         sh = gc.open_by_url(st.secrets["google_sheet_url"])
         worksheet = sh.worksheet("MA200_Varningar")
-        
         data = worksheet.get_all_values()
         if not data: return False
-        
         headers = data[0]
         if "Ticker" not in headers: return False
         ticker_col_idx = headers.index("Ticker")
@@ -150,11 +148,10 @@ def radera_varning_gspread(ticker):
         for i, row in enumerate(data):
             if i > 0 and len(row) > ticker_col_idx:
                 if str(row[ticker_col_idx]).strip().upper() == str(ticker).strip().upper():
-                    rows_to_delete.append(i + 1) # +1 för att Google Sheets börjar på rad 1
+                    rows_to_delete.append(i + 1)
         
         for r in reversed(rows_to_delete):
             worksheet.delete_rows(r)
-            
         return len(rows_to_delete) > 0
     except:
         return False
@@ -223,6 +220,9 @@ meny_val = st.sidebar.radio(
         "⚖️ Ombalansering"
     ]
 )
+st.sidebar.markdown("---")
+svartlista_input = st.sidebar.text_input("🛑 Svartlista / Exkludera (kommaseparerat)", value="", help="Skriv in tickers på bolag du vill gömma för alltid, t.ex. HUM, SBB B")
+svartlista = [x.strip().upper() for x in svartlista_input.split(',')] if svartlista_input.strip() else []
 st.sidebar.markdown("---")
 uppladdad_fil = st.sidebar.file_uploader("Ladda upp Börsdata-fil", type=["xlsx", "csv"])
 
@@ -315,7 +315,6 @@ if meny_val == "📊 Översikt & Historik":
             
             alfa = ret_tot - ret_omx
             
-            # RAD 1 
             c1, c2, c3 = st.columns(3)
             c1.metric("💼 Total Portfölj", f"{senaste_rad['portfolj_varde']:,.0f} kr".replace(',', ' '), f"{ret_tot:+.2f} %")
             c2.metric("🏆 Alfa (vs Index)", f"{alfa:+.2f} %-enh.", f"{alfa:+.2f}")
@@ -323,7 +322,6 @@ if meny_val == "📊 Översikt & Historik":
             
             st.write("") 
             
-            # RAD 2 
             c4, c5, c6 = st.columns(3)
             c4.metric("📈 Value", f"{senaste_rad['varde_value']:,.0f} kr".replace(',', ' '), f"{ret_val:+.2f} %")
             c5.metric("💸 Utdelning", f"{senaste_rad['varde_utdelning']:,.0f} kr".replace(',', ' '), f"{ret_utd:+.2f} %")
@@ -445,15 +443,6 @@ elif meny_val == "🧠 Portföljanalys & Råd":
                 df_risk = pd.DataFrame(risk_data)
                 df_risk = df_risk.sort_values(by="_sort_sharpe", ascending=False).drop(columns=["_sort_sharpe"]).reset_index(drop=True)
                 st.dataframe(df_risk, use_container_width=True)
-                
-                st.markdown("---")
-                st.info("💡 **Kort sagt - Hur ska du läsa dessa siffror?**")
-                st.write("""
-                * **Om aktien har hög volatilitet men också hög Sharpekvot:** 
-                Du gör rätt som äger den! Du får bra betalt för att du vågar sitta kvar när det skumpar.
-                * **Om aktien däremot har hög volatilitet och låg Sharpekvot:** 
-                Då betalar du i 'stress' utan att få tillräcklig avkastning för det. Det är då du bör överväga att sälja!
-                """)
             else:
                 st.warning("Hittade inga aktiva innehav.")
 
@@ -706,7 +695,7 @@ elif meny_val == "📖 Om Kvantstrategierna":
     st.header("📈 1. Trending Value")
     st.markdown("""
     1. Koden rankar alla godkända bolag från 1 (billigast) och uppåt på följande nyckeltal: **P/E, P/S, P/B, P/FCF, och EV/EBITDA**.
-    2. Saknas data straffas bolaget med ett högt fiktivt värde (5000) för att hamna längst ner i rankingen. Förlustbolag (negativa värden eller noll) straffas också med 5000 för att filtreras bort.
+    2. Saknas data straffas bolaget med ett högt fiktivt värde (5000) för att hamna längst ner i rankingen. Förlustbolag (negativa värden) straffas också.
     3. De 40 absolut billigaste bolagen plockas ut.
     4. De 40 billigaste bolagen sorteras så och de 10 med bäst **Sammansatt Momentum** (snitt av 3m, 6m, 12m) väljs ut.
     """)
@@ -727,51 +716,69 @@ elif "Strategi" in meny_val:
     strat_typ = "Value" if "Value" in meny_val else "Utdelning" if "Utdelning" in meny_val else "Momentum"
     
     if uppladdad_fil:
-        with st.spinner("Beräknar strategi..."):
+        with st.spinner("Laddar fil och applicerar eventuell Svartlista..."):
             df, k_namn, k_tick, k_kurs = ladda_och_tvatta_basdata(uppladdad_fil)
             
-            if strat_typ == "Value":
-                v_kols = ['P/E - Senaste', 'P/S - Senaste', 'P/B - Senaste', 'P/FCF - Senaste', 'EV/EBITDA - Senaste']
-                for k in v_kols:
-                    if k in df.columns: 
-                        df[k] = pd.to_numeric(df[k], errors='coerce').fillna(5000)
-                        # --- NYTT: Här straffas alla bolag som går med förlust (värde <= 0) ---
-                        df[k] = df[k].apply(lambda x: 5000 if x <= 0 else x)
-                    else: 
-                        df[k] = 5000
-                    df[f'Rank_{k}'] = df[k].rank(ascending=True, method='min')
-                df['Total_Rank'] = df[[f'Rank_{k}' for k in v_kols]].sum(axis=1) / len(v_kols)
-                k_3m, k_6m, k_12m = next((c for c in df.columns if '3m' in c.lower()), df.columns[0]), next((c for c in df.columns if '6m' in c.lower()), df.columns[0]), next((c for c in df.columns if '1år' in c.lower() or '12m' in c.lower()), df.columns[0])
-                df['Momentum'] = (pd.to_numeric(df[k_3m], errors='coerce').fillna(0) + pd.to_numeric(df[k_6m], errors='coerce').fillna(0) + pd.to_numeric(df[k_12m], errors='coerce').fillna(0)) / 3
-                topp = df.nsmallest(40, 'Total_Rank').sort_values(by='Momentum', ascending=False).head(10)
-                
-            elif strat_typ == "Utdelning":
-                k_utd = 'Direktav. - Senaste'
-                df[k_utd] = pd.to_numeric(df[k_utd], errors='coerce').fillna(0) if k_utd in df.columns else 0
-                k_3m, k_6m, k_12m = next((c for c in df.columns if '3m' in c.lower()), df.columns[0]), next((c for c in df.columns if '6m' in c.lower()), df.columns[0]), next((c for c in df.columns if '1år' in c.lower() or '12m' in c.lower()), df.columns[0])
-                df['Momentum'] = (pd.to_numeric(df[k_3m], errors='coerce').fillna(0) + pd.to_numeric(df[k_6m], errors='coerce').fillna(0) + pd.to_numeric(df[k_12m], errors='coerce').fillna(0)) / 3
-                topp = df.nlargest(40, k_utd).sort_values(by='Momentum', ascending=False).head(10)
-                
-            elif strat_typ == "Momentum":
-                k_3m, k_6m, k_12m = next((c for c in df.columns if '3m' in c.lower()), df.columns[0]), next((c for c in df.columns if '6m' in c.lower()), df.columns[0]), next((c for c in df.columns if '1år' in c.lower() or '12m' in c.lower()), df.columns[0])
-                df['Momentum'] = (pd.to_numeric(df[k_3m], errors='coerce').fillna(0) + pd.to_numeric(df[k_6m], errors='coerce').fillna(0) + pd.to_numeric(df[k_12m], errors='coerce').fillna(0)) / 3
-                topp = df.sort_values(by='Momentum', ascending=False).head(10)
-
-        with st.spinner("Beräknar riskmått (Volatilitet & Sharpe) för Topp 10-kandidaterna..."):
-            topp_risk = topp.copy()
-            vol_list = []
-            sharpe_list = []
+            # --- NYTT: Applicera manuell svartlista ---
+            if svartlista:
+                df = df[~df[k_tick].astype(str).str.upper().str.strip().isin(svartlista)].copy()
             
-            for _, row in topp_risk.iterrows():
+            with st.spinner("Beräknar strategi..."):
+                if strat_typ == "Value":
+                    v_kols = ['P/E - Senaste', 'P/S - Senaste', 'P/B - Senaste', 'P/FCF - Senaste', 'EV/EBITDA - Senaste']
+                    for k in v_kols:
+                        if k in df.columns: 
+                            df[k] = pd.to_numeric(df[k], errors='coerce').fillna(5000)
+                            df[k] = df[k].apply(lambda x: 5000 if x <= 0 else x)
+                        else: 
+                            df[k] = 5000
+                        df[f'Rank_{k}'] = df[k].rank(ascending=True, method='min')
+                    df['Total_Rank'] = df[[f'Rank_{k}' for k in v_kols]].sum(axis=1) / len(v_kols)
+                    k_3m, k_6m, k_12m = next((c for c in df.columns if '3m' in c.lower()), df.columns[0]), next((c for c in df.columns if '6m' in c.lower()), df.columns[0]), next((c for c in df.columns if '1år' in c.lower() or '12m' in c.lower()), df.columns[0])
+                    df['Momentum'] = (pd.to_numeric(df[k_3m], errors='coerce').fillna(0) + pd.to_numeric(df[k_6m], errors='coerce').fillna(0) + pd.to_numeric(df[k_12m], errors='coerce').fillna(0)) / 3
+                    topp_alla = df.nsmallest(40, 'Total_Rank').sort_values(by='Momentum', ascending=False)
+                    
+                elif strat_typ == "Utdelning":
+                    k_utd = 'Direktav. - Senaste'
+                    df[k_utd] = pd.to_numeric(df[k_utd], errors='coerce').fillna(0) if k_utd in df.columns else 0
+                    k_3m, k_6m, k_12m = next((c for c in df.columns if '3m' in c.lower()), df.columns[0]), next((c for c in df.columns if '6m' in c.lower()), df.columns[0]), next((c for c in df.columns if '1år' in c.lower() or '12m' in c.lower()), df.columns[0])
+                    df['Momentum'] = (pd.to_numeric(df[k_3m], errors='coerce').fillna(0) + pd.to_numeric(df[k_6m], errors='coerce').fillna(0) + pd.to_numeric(df[k_12m], errors='coerce').fillna(0)) / 3
+                    topp_alla = df.nlargest(40, k_utd).sort_values(by='Momentum', ascending=False)
+                    
+                elif strat_typ == "Momentum":
+                    k_3m, k_6m, k_12m = next((c for c in df.columns if '3m' in c.lower()), df.columns[0]), next((c for c in df.columns if '6m' in c.lower()), df.columns[0]), next((c for c in df.columns if '1år' in c.lower() or '12m' in c.lower()), df.columns[0])
+                    df['Momentum'] = (pd.to_numeric(df[k_3m], errors='coerce').fillna(0) + pd.to_numeric(df[k_6m], errors='coerce').fillna(0) + pd.to_numeric(df[k_12m], errors='coerce').fillna(0)) / 3
+                    topp_alla = df.sort_values(by='Momentum', ascending=False).head(40)
+
+        with st.spinner("Granskar kandidater och letar efter dolda uppköpsbud (Bud-radar)..."):
+            godkanda_kandidater = []
+            uppkops_varningar = []
+            
+            for _, row in topp_alla.iterrows():
+                if len(godkanda_kandidater) >= 10:
+                    break # Vi har våra 10 rena aktier, avbryt loopen!
+                    
                 t = str(row[k_tick]).upper().strip()
                 yf_ticker = t.replace(" ", "-") if "." in t.replace(" ", "-") else f"{t.replace(' ', '-')}.ST"
                 vol_str = "N/A"
                 sharpe_str = "N/A"
+                
                 try:
                     aktie = yf.Ticker(yf_ticker)
                     hist = aktie.history(period="1y").dropna(subset=['Close'])
                     if len(hist) > 30:
                         returns = hist['Close'].pct_change().dropna()
+                        
+                        # --- NYTT: BUD-RADAR ---
+                        # Uppköpta aktier låser fast sig vid budpriset. Volatiliteten dör.
+                        returns_30d = returns.tail(30)
+                        vol_30d = returns_30d.std() * np.sqrt(252) * 100
+                        
+                        if vol_30d < 9.0: # Extremt låg kortsiktig volatilitet = fryst aktie
+                            uppkops_varningar.append(f"🚨 **{row[k_namn]} ({t})** stoppades! Aktien har fryst i pris (30d volatilitet: {vol_30d:.1f}%). Mycket stor risk för pågående uppköpsbud.")
+                            continue # Kasta aktien och gå vidare till nästa i listan!
+                            
+                        # Standard riskberäkning
                         vol = returns.std() * np.sqrt(252) * 100 
                         ann_ret = (hist['Close'].iloc[-1] / hist['Close'].iloc[0] - 1) * 100
                         sharpe = (ann_ret - 3.0) / vol if vol > 0 else 0
@@ -784,12 +791,19 @@ elif "Strategi" in meny_val:
                 except:
                     pass
                 
-                vol_list.append(vol_str)
-                sharpe_list.append(sharpe_str)
+                rad = row.copy()
+                rad['Årlig Volatilitet'] = vol_str
+                rad['Sharpe (Rf=3%)'] = sharpe_str
+                godkanda_kandidater.append(rad)
                 
-            topp_risk['Årlig Volatilitet'] = vol_list
-            topp_risk['Sharpe (Rf=3%)'] = sharpe_list
+            topp_risk = pd.DataFrame(godkanda_kandidater)
 
+        # Skriv ut varningar om Bud-radarn hittade något
+        if uppkops_varningar:
+            st.error("⚠️ **BUD-RADARN AKTIVERADES!** Följande bolag stoppades från att nå din portfölj:")
+            for varning in uppkops_varningar:
+                st.write(varning)
+                
         st.subheader("🚀 Topp 10 Köpkandidater (inkl. Riskanalys)")
         
         display_cols = [k_namn, k_tick, k_kurs, 'Momentum', 'Årlig Volatilitet', 'Sharpe (Rf=3%)']
