@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.15", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.16", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -157,8 +157,15 @@ def radera_varning_gspread(ticker):
         return False
 
 # ==========================================
-# 2. GLOBAL DATASANERING & SESSION STATE
+# 2. GLOBAL DATASANERING, SESSION STATE & TIDSMASKIN
 # ==========================================
+def hamta_effektiv_manad():
+    """Hoppar fram till nästa månad om vi har passerat den 25:e."""
+    idag = datetime.now()
+    if idag.day >= 25:
+        return (idag.month % 12) + 1
+    return idag.month
+
 strategier = ["Value", "Utdelning", "Momentum"]
 
 for s in strategier:
@@ -333,6 +340,31 @@ if meny_val == "📊 Översikt & Historik":
         st.subheader("Historisk datatabell")
         st.dataframe(hist_df.rename(columns={'datum': 'Datum', 'varde_value': 'Value (SEK)', 'varde_utdelning': 'Utdelning (SEK)', 'varde_momentum': 'Momentum (SEK)', 'portfolj_varde': 'Total Portfölj (SEK)', 'omx_index': 'OMXSPI Index'}), use_container_width=True)
     else: st.warning("Kalkylarket är tomt.")
+    
+    st.markdown("---")
+    
+    with st.expander("⚙️ Nödverktyg: Logga värde per kvantstrategi manuellt"):
+        st.info("Din dagliga robot gör detta automatiskt kl 18:00 varje kväll, men du kan använda detta formulär om du vill logga data manuellt mitt på dagen.")
+        with st.form("logga_varde"):
+            valt_datum = st.date_input("Välj datum", datetime.now())
+            v_value = st.number_input("Värde: Trending Value (SEK)", min_value=0.0, step=1000.0)
+            v_utd = st.number_input("Utdelning: Trendande Utdelning (SEK)", min_value=0.0, step=1000.0)
+            v_mom = st.number_input("Momentum: Sammansatt Momentum (SEK)", min_value=0.0, step=1000.0)
+            
+            if st.form_submit_button("Spara datapunkt"):
+                datum_str = valt_datum.strftime("%Y-%m-%d")
+                totalt_portfoljvarde = v_value + v_utd + v_mom
+                with st.spinner("Hämtar OMXSPI..."):
+                    try:
+                        omx = yf.Ticker("^OMXSPI")
+                        hist = omx.history(start=valt_datum, end=valt_datum + timedelta(days=4))
+                        if not hist.empty:
+                            omx_stangning = float(hist['Close'].iloc[0])
+                            if spara_historik_gspread(datum_str, v_value, v_utd, v_mom, totalt_portfoljvarde, omx_stangning):
+                                st.success("Sparat!")
+                                st.rerun()
+                        else: st.error("Kunde inte hitta indexkurs.")
+                    except Exception as e: st.error(f"Fel: {e}")
 
 # --- SIDA 2: PORTFÖLJANALYS & RÅDGIVARE ---
 elif meny_val == "🧠 Portföljanalys & Råd":
@@ -453,6 +485,62 @@ elif meny_val == "🧠 Portföljanalys & Råd":
                 st.dataframe(df_v, use_container_width=True)
             else:
                 st.success("✅ Alla dina aktier handlas över sitt MA200 för tillfället!")
+    
+    st.markdown("---")
+
+    varden = {}
+    total_nu = 0.0
+    har_nagra_aktier = False
+    
+    for s in strategier:
+        df = st.session_state[f'bef_portfolj_{s}']
+        if not df.empty: har_nagra_aktier = True
+        summa = (df['Antal'] * df['Kurs']).sum()
+        varden[s] = float(summa)
+        total_nu += float(summa)
+
+    if total_nu > 0:
+        manad_nu = hamta_effektiv_manad()
+        mal_vikter = hamta_malviktning(manad_nu)
+        
+        st.subheader("⚖️ Din nuvarande portföljbalans")
+        balans_data = []
+        for s in strategier:
+            nu_vikt = varden[s] / total_nu
+            diff_vikt = nu_vikt - mal_vikter[s]
+            status = "🟢 Perfekt" if abs(diff_vikt) <= 0.05 else ("🔴 För tung" if diff_vikt > 0 else "🟡 För lätt")
+            balans_data.append({
+                "Strategi": s,
+                "Nuvarande Värde": f"{varden[s]:,.0f} kr".replace(',', ' '),
+                "Din Vikt": f"{nu_vikt*100:.1f} %",
+                "Målvikt (Denna månad)": f"{mal_vikter[s]*100:.1f} %",
+                "Avvikelse": f"{diff_vikt*100:+.1f} %",
+                "Status": status
+            })
+        st.dataframe(pd.DataFrame(balans_data), use_container_width=True)
+
+        st.subheader("💡 Förslag på omviktning")
+        for bd in balans_data:
+            diff = float(bd['Avvikelse'].replace('%', '').strip())
+            kr_diff = (total_nu * mal_vikter[bd['Strategi']]) - varden[bd['Strategi']]
+            if diff > 5: st.warning(f"📉 **Sänk {bd['Strategi']}:** Du har en övervikt. Överväg att skala ner med ca **{abs(kr_diff):,.0f} kr** vid nästa ombalansering.")
+            elif diff < -5: st.info(f"📈 **Öka {bd['Strategi']}:** Du är underviktad gentemot målvikt. Överväg att tillföra ca **{kr_diff:,.0f} kr**.")
+        
+        if len(hist_df) >= 2:
+            st.markdown("---")
+            st.subheader("🏆 Din Prestation (Alfa - Total Utveckling)")
+            port_start = hist_df['portfolj_varde'].iloc[0]
+            omx_start = hist_df['omx_index'].iloc[0]
+            port_utv = (hist_df['portfolj_varde'].iloc[-1] / port_start) * 100 - 100 if port_start > 0 else 0
+            omx_utv = (hist_df['omx_index'].iloc[-1] / omx_start) * 100 - 100 if omx_start > 0 else 0
+            alfa = port_utv - omx_utv
+            
+            c1, c2 = st.columns(2)
+            c1.metric("Din Totala Utveckling vs Index (Alfa)", f"{alfa:+.2f} procentenheter")
+            if alfa > 0: c2.success("Fantastiskt jobbat! Din Kvant-maskin slår marknaden totalt sett.")
+            else: c2.warning("Du underpresterar totalt sett mot index. Kvantstrategier kräver tålamod.")
+    elif har_nagra_aktier:
+        st.warning("⚠️ **Aktier hittades, men det totala värdet är 0 kr!** Hämta livekurser för att fylla i priser.")
 
 # --- SIDA 3: MIN PORTFÖLJ ---
 elif meny_val == "💼 Min Portfölj":
@@ -552,11 +640,13 @@ elif meny_val == "💼 Min Portfölj":
 elif meny_val == "📅 Säsongsmönster & Viktning":
     st.title("📅 Säsongsmönster & Dynamisk Viktning")
     
-    nuvarande_manad = datetime.now().month
+    nuvarande_manad = hamta_effektiv_manad()
     manader = ["Januari", "Februari", "Mars", "April", "Maj", "Juni", "Juli", "Augusti", "September", "Oktober", "November", "December"]
     manad_namn = manader[nuvarande_manad - 1]
-
-    st.subheader(f"📍 Analys för {manad_namn}")
+    
+    idag = datetime.now()
+    framatblick = " (Framåtblickande)" if idag.day >= 25 else ""
+    st.subheader(f"📍 Analys för {manad_namn}{framatblick}")
     mal_vikter = hamta_malviktning(nuvarande_manad)
     
     varden = {}
@@ -586,6 +676,16 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
             st.progress(min(float(nu_vikter['Momentum']), 1.0), text="Din reella vikt")
             st.progress(float(mal_vikter['Momentum']), text="Optimal målvikt")
 
+    st.markdown("---")
+    if nuvarande_manad in [11, 12, 1]:
+        st.success("🟢 **Fokus: Värdestrategi (Value)**\n\nDu befinner dig i bästa möjliga miljö för Värdebolag. Nedpressade bolag säljs av fondförvaltare i skatteplaneringssyfte innan nyår. I januari köps dessa tillbaka vilket skapar kraftiga studsar uppåt.")
+    elif nuvarande_manad in [2, 3, 4]:
+        st.success("🟢 **Fokus: Utdelning & Momentum**\n\nDetta är fönstret för utdelningsjägare! Kapital roterar in i högutdelare fram till X-dagen. Samtidigt har Momentum återhämtat sig från januarikraschen.")
+    elif nuvarande_manad in [5, 6, 7, 8]:
+        st.info("🟡 **Fokus: Marknadens Vakuum (Defensivt)**\n\n'Sell in May and go away' existerar av en anledning. Sommarmånaderna lider ofta av låg likviditet.")
+    elif nuvarande_manad in [9, 10]:
+        st.success("🟢 **Fokus: Momentum**\n\nLikviditeten är tillbaka. Rapporterna i slutet av sommaren har etablerat nya starka trender. Rid på vinnarna!")
+
 # --- SIDA 5: OM STRATEGIERNA ---
 elif meny_val == "📖 Om Kvantstrategierna":
     st.title("📖 Dokumentation av Kvantstrategierna")
@@ -600,6 +700,16 @@ elif meny_val == "📖 Om Kvantstrategierna":
     2. Saknas data straffas bolaget med ett högt fiktivt värde (5000) för att hamna längst ner i rankingen. Förlustbolag (negativa värden) straffas också.
     3. De 40 absolut billigaste bolagen plockas ut.
     4. De 40 billigaste bolagen sorteras så och de 10 med bäst **Sammansatt Momentum** (snitt av 3m, 6m, 12m) väljs ut.
+    """)
+    st.header("💸 2. Trendande Utdelning")
+    st.markdown("""
+    1. Koden plockar ut de 40 bolagen med absolut högst direktavkastning i %.
+    2. Högutdelarna sorteras efter Sammansatt Momentum. De 10 med starkast positiv trend blir din målkorg.
+    """)
+    st.header("⚡ 3. Sammansatt Momentum")
+    st.markdown("""
+    1. Koden beräknar **Sammansatt Momentum** = (Utv 3m + Utv 6m + Utv 12m) / 3.
+    2. Hela börsens bolag sorteras efter detta sammansatta värde och de 10 bästa väljs rakt av.
     """)
 
 # --- SIDA 6, 7, 8: STRATEGIKALKYLATORERNA ---
@@ -684,8 +794,8 @@ elif "Strategi" in meny_val:
         display_cols = [k_namn, k_tick, k_kurs, 'Momentum', 'Årlig Volatilitet', 'Sharpe (Rf=3%)']
         st.dataframe(topp_risk[display_cols].reset_index(drop=True), use_container_width=True)
         
-        # --- NYTT: Varningsruta för Gemini ---
-        st.info("🤖 **Kom ihåg:** Sök på Gemini och kontrollera om något av dessa bolag har ett pågående uppköpsbud innan du går vidare!")
+        # --- NYTT: Uppdaterad varningsruta ---
+        st.info("🤖 **Kom ihåg:** Kopiera Topp 10-listan ovan och be Gemini att: \n1) **Kontrollera eventuella pågående uppköpsbud**, och \n2) **Leta efter aktuella köpsignaler** för dessa bolag, innan du går vidare!")
         
         if st.button("⚡ Skicka Topp 10 till Ombalansering"):
             st.session_state['mal_portfolj'] = topp_risk[[k_namn, k_tick, k_kurs]].rename(columns={k_namn:"Bolagsnamn", k_tick:"Ticker", k_kurs:"Kurs"}).reset_index(drop=True)
