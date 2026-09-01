@@ -2,7 +2,7 @@ name: Månadsvis AI-Forskning
 
 on:
   schedule:
-    - cron: '0 8 1 * *'
+    - cron: '0 17 25 * *'
   workflow_dispatch:
 
 jobs:
