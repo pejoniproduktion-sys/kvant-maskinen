@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.16", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.17", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -160,7 +160,6 @@ def radera_varning_gspread(ticker):
 # 2. GLOBAL DATASANERING, SESSION STATE & TIDSMASKIN
 # ==========================================
 def hamta_effektiv_manad():
-    """Hoppar fram till nästa månad om vi har passerat den 25:e."""
     idag = datetime.now()
     if idag.day >= 25:
         return (idag.month % 12) + 1
@@ -557,17 +556,45 @@ elif meny_val == "💼 Min Portfölj":
     
     with c1:
         with st.expander("➕ Lägg till/Ändra aktie"):
+            df_curr = st.session_state[f'bef_portfolj_{vald}']
+            aktier_rader = df_curr[df_curr['Ticker'] != 'KASSA']
+            
+            # --- NYTT: Rullgardinsmeny för befintliga aktier ---
+            meny_val_lista = [f"{r['Bolagsnamn']} ({r['Ticker']})" for _, r in aktier_rader.iterrows()]
+            lagg_till_text = "➕ Lägg till ny aktie"
+            meny_val_lista.append(lagg_till_text)
+            
+            vald_aktie_meny = st.selectbox("Välj aktie i portföljen att ändra:", meny_val_lista)
+            
+            # Autofyll variabler baserat på valet
+            if vald_aktie_meny == lagg_till_text:
+                def_namn, def_tick, def_antal, def_kurs = "", "", 0, 0.0
+            else:
+                vald_tick = vald_aktie_meny.split("(")[-1].replace(")", "").strip()
+                rad = aktier_rader[aktier_rader['Ticker'] == vald_tick].iloc[0]
+                def_namn = str(rad['Bolagsnamn'])
+                def_tick = str(rad['Ticker'])
+                def_antal = int(rad['Antal'])
+                def_kurs = float(rad['Kurs'])
+            
             with st.form("lagg_till_form"):
-                col_namn, col_tick = st.text_input("Bolagsnamn"), st.text_input("Ticker")
-                col_antal, col_kurs = st.number_input("Antal", min_value=0, step=1), st.number_input("Kurs", min_value=0.0, step=0.1)
-                if st.form_submit_button("Spara i tabell"):
+                col_namn = st.text_input("Bolagsnamn", value=def_namn)
+                col_tick = st.text_input("Ticker", value=def_tick)
+                col_antal = st.number_input("Antal", min_value=0, value=def_antal, step=1)
+                col_kurs = st.number_input("Kurs", min_value=0.0, value=def_kurs, step=0.01)
+                
+                if st.form_submit_button("Uppdatera / Spara i tabell"):
                     df = st.session_state[f'bef_portfolj_{vald}'].copy()
                     new_row = {"Bolagsnamn": col_namn.strip(), "Ticker": col_tick.upper().strip(), "Antal": int(col_antal), "Kurs": float(col_kurs)}
+                    
                     if col_tick.upper().strip() in df['Ticker'].values: 
                         df.loc[df['Ticker'] == col_tick.upper().strip(), ["Bolagsnamn", "Ticker", "Antal", "Kurs"]] = [new_row['Bolagsnamn'], new_row['Ticker'], new_row['Antal'], new_row['Kurs']]
-                    else: df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                    else: 
+                        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                     st.session_state[f'bef_portfolj_{vald}'] = df
                     st.rerun()
+                    
+            st.markdown(f"**💡 Kom ihåg att klicka på 'Spara {vald}-portföljen' (knappen längst ner)** när du har gjort dina ändringar!")
                     
     with c2:
         with st.expander("❌ Ta bort aktie"):
@@ -794,7 +821,6 @@ elif "Strategi" in meny_val:
         display_cols = [k_namn, k_tick, k_kurs, 'Momentum', 'Årlig Volatilitet', 'Sharpe (Rf=3%)']
         st.dataframe(topp_risk[display_cols].reset_index(drop=True), use_container_width=True)
         
-        # --- NYTT: Uppdaterad varningsruta ---
         st.info("🤖 **Kom ihåg:** Kopiera Topp 10-listan ovan och be Gemini att: \n1) **Kontrollera eventuella pågående uppköpsbud**, och \n2) **Leta efter aktuella köpsignaler** för dessa bolag, innan du går vidare!")
         
         if st.button("⚡ Skicka Topp 10 till Ombalansering"):
