@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.17", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.18", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -371,10 +371,28 @@ elif meny_val == "🧠 Portföljanalys & Råd":
     
     ai_datum, ai_text = ladda_ai_analys_gspread()
     with st.container():
-        st.subheader("🤖 Månadens Kvant-forskning (AI & Portföljgranskning)")
+        c1, c2 = st.columns([3, 2])
+        with c1:
+            st.subheader("🤖 Kvant-forskning (AI & Portföljgranskning)")
+            if ai_datum:
+                st.caption(f"🗓️ Senast uppdaterad: {ai_datum}")
+        with c2:
+            # --- NYTT: Färsk analys-funktion ---
+            with st.expander("⚡ Tvångskör ny analys direkt"):
+                st.markdown("""
+                **Så här gör du en manuell körning:**
+                Tack vare att vi lade in `workflow_dispatch` i din kod kan du när som helst be roboten göra en blixtanalys.
+                
+                1. Öppna ditt repo på **GitHub**.
+                2. Klicka på fliken **Actions** i toppmenyn.
+                3. Välj ditt workflow i vänsterspalten (t.ex. *AI-Analys*).
+                4. Klicka på knappen **Run workflow** (till höger).
+                
+                *Roboten startar direkt och den nya dagsfärska analysen dyker upp här i appen inom ett par minuter!*
+                """)
+                
         if ai_datum:
-            st.caption(f"🗓️ {ai_datum}")
-            with st.expander("Läs månadens marknadsanalys & rannsakning", expanded=False):
+            with st.expander("Läs marknadsanalys & rannsakning", expanded=False):
                 st.markdown(ai_text)
         else:
             st.info(ai_text)
@@ -559,14 +577,12 @@ elif meny_val == "💼 Min Portfölj":
             df_curr = st.session_state[f'bef_portfolj_{vald}']
             aktier_rader = df_curr[df_curr['Ticker'] != 'KASSA']
             
-            # --- NYTT: Rullgardinsmeny för befintliga aktier ---
             meny_val_lista = [f"{r['Bolagsnamn']} ({r['Ticker']})" for _, r in aktier_rader.iterrows()]
             lagg_till_text = "➕ Lägg till ny aktie"
             meny_val_lista.append(lagg_till_text)
             
             vald_aktie_meny = st.selectbox("Välj aktie i portföljen att ändra:", meny_val_lista)
             
-            # Autofyll variabler baserat på valet
             if vald_aktie_meny == lagg_till_text:
                 def_namn, def_tick, def_antal, def_kurs = "", "", 0, 0.0
             else:
