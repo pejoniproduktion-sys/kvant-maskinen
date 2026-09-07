@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.19", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.20", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -202,7 +202,6 @@ if 'senast_uppdaterad_kurser' not in st.session_state:
     st.session_state['senast_uppdaterad_kurser'] = "Ej uppdaterat denna session"
 
 def hamta_malviktning(manad):
-    # NY AGGRESSIV VIKTNING: 0% Utdelning under maj-okt
     if manad in [11, 12, 1]: return {"Value": 0.50, "Utdelning": 0.20, "Momentum": 0.30}
     elif manad in [2, 3, 4]: return {"Value": 0.20, "Utdelning": 0.50, "Momentum": 0.30}
     elif manad in [5, 6, 7, 8]: return {"Value": 0.50, "Utdelning": 0.00, "Momentum": 0.50}
@@ -502,6 +501,62 @@ elif meny_val == "🧠 Portföljanalys & Råd":
                 st.dataframe(df_v, use_container_width=True)
             else:
                 st.success("✅ Alla dina aktier handlas över sitt MA200 för tillfället!")
+    
+    st.markdown("---")
+
+    varden = {}
+    total_nu = 0.0
+    har_nagra_aktier = False
+    
+    for s in strategier:
+        df = st.session_state[f'bef_portfolj_{s}']
+        if not df.empty: har_nagra_aktier = True
+        summa = (df['Antal'] * df['Kurs']).sum()
+        varden[s] = float(summa)
+        total_nu += float(summa)
+
+    if total_nu > 0:
+        manad_nu = hamta_effektiv_manad()
+        mal_vikter = hamta_malviktning(manad_nu)
+        
+        st.subheader("⚖️ Din nuvarande portföljbalans")
+        balans_data = []
+        for s in strategier:
+            nu_vikt = varden[s] / total_nu
+            diff_vikt = nu_vikt - mal_vikter[s]
+            status = "🟢 Perfekt" if abs(diff_vikt) <= 0.05 else ("🔴 För tung" if diff_vikt > 0 else "🟡 För lätt")
+            balans_data.append({
+                "Strategi": s,
+                "Nuvarande Värde": f"{varden[s]:,.0f} kr".replace(',', ' '),
+                "Din Vikt": f"{nu_vikt*100:.1f} %",
+                "Målvikt (Denna månad)": f"{mal_vikter[s]*100:.1f} %",
+                "Avvikelse": f"{diff_vikt*100:+.1f} %",
+                "Status": status
+            })
+        st.dataframe(pd.DataFrame(balans_data), use_container_width=True)
+
+        st.subheader("💡 Förslag på omviktning")
+        for bd in balans_data:
+            diff = float(bd['Avvikelse'].replace('%', '').strip())
+            kr_diff = (total_nu * mal_vikter[bd['Strategi']]) - varden[bd['Strategi']]
+            if diff > 5: st.warning(f"📉 **Sänk {bd['Strategi']}:** Du har en övervikt. Överväg att skala ner med ca **{abs(kr_diff):,.0f} kr** vid nästa ombalansering.")
+            elif diff < -5: st.info(f"📈 **Öka {bd['Strategi']}:** Du är underviktad gentemot målvikt. Överväg att tillföra ca **{kr_diff:,.0f} kr**.")
+        
+        if len(hist_df) >= 2:
+            st.markdown("---")
+            st.subheader("🏆 Din Prestation (Alfa - Total Utveckling)")
+            port_start = hist_df['portfolj_varde'].iloc[0]
+            omx_start = hist_df['omx_index'].iloc[0]
+            port_utv = (hist_df['portfolj_varde'].iloc[-1] / port_start) * 100 - 100 if port_start > 0 else 0
+            omx_utv = (hist_df['omx_index'].iloc[-1] / omx_start) * 100 - 100 if omx_start > 0 else 0
+            alfa = port_utv - omx_utv
+            
+            c1, c2 = st.columns(2)
+            c1.metric("Din Totala Utveckling vs Index (Alfa)", f"{alfa:+.2f} procentenheter")
+            if alfa > 0: c2.success("Fantastiskt jobbat! Din Kvant-maskin slår marknaden totalt sett.")
+            else: c2.warning("Du underpresterar totalt sett mot index. Kvantstrategier kräver tålamod.")
+    elif har_nagra_aktier:
+        st.warning("⚠️ **Aktier hittades, men det totala värdet är 0 kr!** Hämta livekurser för att fylla i priser.")
 
 # --- SIDA 3: MIN PORTFÖLJ ---
 elif meny_val == "💼 Min Portfölj":
@@ -671,6 +726,36 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
                 st.markdown(f"Tydlig signal: {signal}")
                 st.progress(min(float(nu_vikt), 1.0), text="Din reella vikt")
                 st.progress(float(mal_vikt), text="Optimal målvikt")
+
+    # --- NYTT: Framåtblickande Radar ---
+    st.markdown("---")
+    st.subheader("🔭 Radar: Förberedelser inför nästa månad")
+    
+    nasta_manad = (nuvarande_manad % 12) + 1
+    namn_nasta = manader[nasta_manad - 1]
+    
+    vikter_nu = mal_vikter
+    vikter_sen = hamta_malviktning(nasta_manad)
+    
+    if vikter_nu == vikter_sen:
+        st.info(f"Inga strategiskiften planerade för nästa månadsskifte (till **{namn_nasta.lower()}**). Vi håller fast vid nuvarande strategivikter.")
+    else:
+        st.write(f"Nästa månadsskifte (till **{namn_nasta.lower()}**) sker följande större skiften i Kvant-maskinen. Genom att veta detta redan nu kan du frontspringa marknaden:")
+        
+        for s in strategier:
+            diff_framat = vikter_sen[s] - vikter_nu[s]
+            
+            if diff_framat > 0:
+                if s == "Utdelning" and vikter_nu[s] == 0:
+                    st.success(f"🌱 **Smygstart för {s}:** Vi går från **{vikter_nu[s]*100:.0f}% till {vikter_sen[s]*100:.0f}%**. Dags att damma av utdelningslistorna och börja leta köpkandidater innan massan vaknar!")
+                else:
+                    st.success(f"📈 **Dags att öka {s}:** Målviktningen höjs från **{vikter_nu[s]*100:.0f}% till {vikter_sen[s]*100:.0f}%**. Du kan med fördel börja fylla på portföljen redan nu.")
+            
+            elif diff_framat < 0:
+                if s == "Utdelning" and vikter_sen[s] == 0:
+                    st.error(f"🛑 **Säljvarning för {s}:** Vi stänger portföljen helt (från **{vikter_nu[s]*100:.0f}% till 0%**). Gör dig redo att sälja av och flytta kapitalet innan sommartorkan drar igång.")
+                else:
+                    st.warning(f"📉 **Dags att minska {s}:** Målviktningen sänks från **{vikter_nu[s]*100:.0f}% till {vikter_sen[s]*100:.0f}%**. Börja fundera på vilka av dina svagaste innehav du ska sälja av.")
 
     st.markdown("---")
     if nuvarande_manad in [11, 12, 1]:
