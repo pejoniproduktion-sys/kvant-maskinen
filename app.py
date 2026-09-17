@@ -6,11 +6,12 @@ from datetime import datetime, timedelta
 import json
 import gspread
 from google.oauth2.service_account import Credentials
+import plotly.express as px
 
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.20", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.21", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -328,13 +329,47 @@ if meny_val == "📊 Översikt & Historik":
             c6.metric("⚡ Momentum", f"{senaste_rad['varde_momentum']:,.0f} kr".replace(',', ' '), f"{ret_mom:+.2f} %")
             
             st.markdown("---")
-            kols = {'varde_value': 'Value (%)', 'varde_utdelning': 'Utdelning (%)', 'varde_momentum': 'Momentum (%)', 'portfolj_varde': 'Total Portfölj (%)', 'omx_index': 'OMXSPI (%)'}
-            graf_df = hist_df[['datum']].copy()
-            for org_col, ny_col in kols.items():
-                start_varden = hist_df[hist_df[org_col] > 0][org_col]
-                graf_df[ny_col] = ((hist_df[org_col] / start_varden.iloc[0]) * 100 - 100) if not start_varden.empty else 0.0
-            graf_df = graf_df.set_index('datum')
-            st.line_chart(graf_df)
+            
+            # --- NY INTERAKTIV GRAFIK (PLOTLY) ---
+            st.subheader("📊 Interaktiv Portföljgrafik")
+            st.markdown("De 'tvära kasten' uppstår i vanliga procent-grafer när du flyttar kapital mellan strategierna. För att ge dig en sann och inspirerande överblick har vi delat upp grafiken i två intelligenta vyer:")
+            
+            tab_sek, tab_proc = st.tabs(["💰 Kapital & Fördelning (SEK)", "📈 Totalavkastning vs Index (%)"])
+            
+            with tab_sek:
+                # Stacked Area (Ytgraf)
+                df_area = hist_df[['datum', 'varde_value', 'varde_utdelning', 'varde_momentum']].copy()
+                df_area = df_area.rename(columns={'varde_value': 'Value', 'varde_utdelning': 'Utdelning', 'varde_momentum': 'Momentum'})
+                df_melt = df_area.melt(id_vars='datum', var_name='Strategi', value_name='Värde (SEK)')
+                
+                fig_area = px.area(
+                    df_melt, x='datum', y='Värde (SEK)', color='Strategi',
+                    color_discrete_map={'Value': '#2980b9', 'Utdelning': '#27ae60', 'Momentum': '#8e44ad'},
+                    title='Din Förmögenhetsresa (Absoluta tal i SEK)'
+                )
+                fig_area.update_layout(hovermode='x unified', xaxis_title="Datum", yaxis_title="Kapital (SEK)")
+                st.plotly_chart(fig_area, use_container_width=True)
+                
+            with tab_proc:
+                # Linjegraf enbart för Total vs OMXSPI
+                df_line = hist_df[['datum', 'portfolj_varde', 'omx_index']].copy()
+                
+                start_port = df_line[df_line['portfolj_varde'] > 0]['portfolj_varde'].iloc[0] if not df_line[df_line['portfolj_varde'] > 0].empty else 1
+                start_omx = df_line[df_line['omx_index'] > 0]['omx_index'].iloc[0] if not df_line[df_line['omx_index'] > 0].empty else 1
+                
+                df_line['Din Portfölj (%)'] = ((df_line['portfolj_varde'] / start_port) - 1) * 100
+                df_line['OMXSPI (%)'] = ((df_line['omx_index'] / start_omx) - 1) * 100
+                
+                df_line_melt = df_line[['datum', 'Din Portfölj (%)', 'OMXSPI (%)']].melt(id_vars='datum', var_name='Jämförelse', value_name='Utveckling (%)')
+                
+                fig_line = px.line(
+                    df_line_melt, x='datum', y='Utveckling (%)', color='Jämförelse',
+                    color_discrete_map={'Din Portfölj (%)': '#f39c12', 'OMXSPI (%)': '#7f8c8d'},
+                    title='Total Portföljutveckling jämfört med Stockholmsbörsen'
+                )
+                fig_line.update_layout(hovermode='x unified', xaxis_title="Datum", yaxis_title="Utveckling sedan start (%)")
+                st.plotly_chart(fig_line, use_container_width=True)
+            # -----------------------------------
             
         st.subheader("Historisk datatabell")
         st.dataframe(hist_df.rename(columns={'datum': 'Datum', 'varde_value': 'Value (SEK)', 'varde_utdelning': 'Utdelning (SEK)', 'varde_momentum': 'Momentum (SEK)', 'portfolj_varde': 'Total Portfölj (SEK)', 'omx_index': 'OMXSPI Index'}), use_container_width=True)
@@ -501,62 +536,6 @@ elif meny_val == "🧠 Portföljanalys & Råd":
                 st.dataframe(df_v, use_container_width=True)
             else:
                 st.success("✅ Alla dina aktier handlas över sitt MA200 för tillfället!")
-    
-    st.markdown("---")
-
-    varden = {}
-    total_nu = 0.0
-    har_nagra_aktier = False
-    
-    for s in strategier:
-        df = st.session_state[f'bef_portfolj_{s}']
-        if not df.empty: har_nagra_aktier = True
-        summa = (df['Antal'] * df['Kurs']).sum()
-        varden[s] = float(summa)
-        total_nu += float(summa)
-
-    if total_nu > 0:
-        manad_nu = hamta_effektiv_manad()
-        mal_vikter = hamta_malviktning(manad_nu)
-        
-        st.subheader("⚖️ Din nuvarande portföljbalans")
-        balans_data = []
-        for s in strategier:
-            nu_vikt = varden[s] / total_nu
-            diff_vikt = nu_vikt - mal_vikter[s]
-            status = "🟢 Perfekt" if abs(diff_vikt) <= 0.05 else ("🔴 För tung" if diff_vikt > 0 else "🟡 För lätt")
-            balans_data.append({
-                "Strategi": s,
-                "Nuvarande Värde": f"{varden[s]:,.0f} kr".replace(',', ' '),
-                "Din Vikt": f"{nu_vikt*100:.1f} %",
-                "Målvikt (Denna månad)": f"{mal_vikter[s]*100:.1f} %",
-                "Avvikelse": f"{diff_vikt*100:+.1f} %",
-                "Status": status
-            })
-        st.dataframe(pd.DataFrame(balans_data), use_container_width=True)
-
-        st.subheader("💡 Förslag på omviktning")
-        for bd in balans_data:
-            diff = float(bd['Avvikelse'].replace('%', '').strip())
-            kr_diff = (total_nu * mal_vikter[bd['Strategi']]) - varden[bd['Strategi']]
-            if diff > 5: st.warning(f"📉 **Sänk {bd['Strategi']}:** Du har en övervikt. Överväg att skala ner med ca **{abs(kr_diff):,.0f} kr** vid nästa ombalansering.")
-            elif diff < -5: st.info(f"📈 **Öka {bd['Strategi']}:** Du är underviktad gentemot målvikt. Överväg att tillföra ca **{kr_diff:,.0f} kr**.")
-        
-        if len(hist_df) >= 2:
-            st.markdown("---")
-            st.subheader("🏆 Din Prestation (Alfa - Total Utveckling)")
-            port_start = hist_df['portfolj_varde'].iloc[0]
-            omx_start = hist_df['omx_index'].iloc[0]
-            port_utv = (hist_df['portfolj_varde'].iloc[-1] / port_start) * 100 - 100 if port_start > 0 else 0
-            omx_utv = (hist_df['omx_index'].iloc[-1] / omx_start) * 100 - 100 if omx_start > 0 else 0
-            alfa = port_utv - omx_utv
-            
-            c1, c2 = st.columns(2)
-            c1.metric("Din Totala Utveckling vs Index (Alfa)", f"{alfa:+.2f} procentenheter")
-            if alfa > 0: c2.success("Fantastiskt jobbat! Din Kvant-maskin slår marknaden totalt sett.")
-            else: c2.warning("Du underpresterar totalt sett mot index. Kvantstrategier kräver tålamod.")
-    elif har_nagra_aktier:
-        st.warning("⚠️ **Aktier hittades, men det totala värdet är 0 kr!** Hämta livekurser för att fylla i priser.")
 
 # --- SIDA 3: MIN PORTFÖLJ ---
 elif meny_val == "💼 Min Portfölj":
@@ -727,7 +706,6 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
                 st.progress(min(float(nu_vikt), 1.0), text="Din reella vikt")
                 st.progress(float(mal_vikt), text="Optimal målvikt")
 
-    # --- NYTT: Framåtblickande Radar ---
     st.markdown("---")
     st.subheader("🔭 Radar: Förberedelser inför nästa månad")
     
