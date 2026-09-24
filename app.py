@@ -7,11 +7,13 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 import plotly.express as px
+import requests
+import io
 
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.22", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.23", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -158,42 +160,35 @@ def radera_varning_gspread(ticker):
         return False
 
 # --- NY MODUL: INSYNSHANDEL (FINANSINSPEKTIONEN) ---
-@st.cache_data(ttl=3600) # Sparar i minnet i 1 timme för att slippa ladda vid varje klick
+@st.cache_data(ttl=3600)
 def hamta_fi_insynshandel():
     try:
-        # Hämtar data från de senaste 14 dagarna
         tom_datum = datetime.now().strftime("%Y-%m-%d")
         from_datum = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
-        
-        # Direktlänk till FI:s dolda CSV-export
         url = f"https://marknadssok.fi.se/publiceringsklient/sv-SE/Search/Search?SearchFunctionType=Insyn&Publiceringsdatum.From={from_datum}&Publiceringsdatum.To={tom_datum}&button=export&exporttype=csv"
         
-        # FI kodar ofta sina filer i utf-16le
-        df = pd.read_csv(url, sep=';', encoding='utf-16le', on_bad_lines='skip')
+        # Säkerställ anslutning med User-Agent för att undvika att FI blockerar anropet
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        response = requests.get(url, headers=headers, timeout=10)
+        response.encoding = 'utf-16le'
         
-        # Rensa bort allt utom rena aktieköp (Förvärv)
+        df = pd.read_csv(io.StringIO(response.text), sep=';', on_bad_lines='skip')
         df = df[df['Transaktionskaraktär'].astype(str).str.contains('Förvärv', case=False, na=False)]
         
-        # Vaska fram tunga insynspersoner (filtrera bort småchefer)
         tunga_roller = ['VD', 'Verkställande direktör', 'Styrelseledamot', 'Styrelseordförande', 'CFO']
         df = df[df['Befattning'].astype(str).str.contains('|'.join(tunga_roller), case=False, na=False)]
         
-        # Fixa sifferformat (FI använder kommatecken för decimaler)
         df['Volym'] = pd.to_numeric(df['Volym'].astype(str).str.replace(',', '.').str.replace(' ', ''), errors='coerce').fillna(0)
         df['Pris'] = pd.to_numeric(df['Pris'].astype(str).str.replace(',', '.').str.replace(' ', ''), errors='coerce').fillna(0)
         
-        # Beräkna totalt ordervärde
         df['Värde (SEK)'] = df['Volym'] * df['Pris']
-        
-        # Visa bara "riktiga" transaktioner över 100 000 SEK (ta bort fusk/småköp)
         df = df[df['Värde (SEK)'] >= 100000]
         
-        # Välj ut relevanta kolumner och snygga till
         cols = ['Publiceringsdatum', 'Utgivare', 'Person i ledande ställning', 'Befattning', 'Värde (SEK)']
         df = df[cols].sort_values('Publiceringsdatum', ascending=False).reset_index(drop=True)
         return df
     except Exception as e:
-        return pd.DataFrame() # Returnerar tom tabell om FI:s server är nere
+        return pd.DataFrame() 
 
 # ==========================================
 # 2. GLOBAL DATASANERING, SESSION STATE & TIDSMASKIN
@@ -255,7 +250,7 @@ meny_val = st.sidebar.radio(
     "Välj vy:",
     [
         "📊 Översikt & Historik", 
-        "⚡ Blixt-signaler & Insyn", # NY SIDORUBRIK
+        "⚡ Blixt-signaler & Insyn", 
         "🧠 Portföljanalys & Råd",
         "💼 Min Portfölj", 
         "📅 Säsongsmönster & Viktning", 
@@ -439,16 +434,14 @@ if meny_val == "📊 Översikt & Historik":
 elif meny_val == "⚡ Blixt-signaler & Insyn":
     st.title("⚡ Blixt-signaler & Kortsiktig Edge")
     
-    # Textruta som förklarar funktionen kort & väsentligt
     st.info("""
     **Vad gör den här sidan?**
-    Här hittar du snabba, konkreta händelser som kan driva en aktie uppåt i närtid. Istället för tunga årsrapporter scannar vi marknaden efter "smart money".
+    Här hittar du snabba, konkreta händelser som kan driva en aktie uppåt i närtid. Istället för tunga årsrapporter scannar vi marknaden efter "smart money" och volymutbrott.
     """)
     
     st.subheader("🔎 Insynshandel (Finansinspektionen)")
     st.markdown("""
-    **Varför är detta viktigt?**
-    När en VD eller Styrelseordförande köper aktier för egna pengar finns det ofta bara en anledning: de tror att kursen ska upp. Denna radar hämtar live-data från Finansinspektionen (senaste 14 dagarna) och skalar bort bruset.
+    **Varför är detta viktigt?** När en VD eller Styrelseordförande köper aktier för egna pengar finns det ofta bara en anledning: de tror att kursen ska upp. Denna radar hämtar live-data från Finansinspektionen (senaste 14 dagarna) och skalar bort bruset.
     * **Endast Köp:** Vi struntar i försäljningar (som kan bero på skatt/husköp) och bonusprogram.
     * **Endast Tungviktare:** Bara VD, CFO och styrelseledamöter visas.
     * **Rejäla summor:** Endast investeringar över 100 000 SEK flaggas.
@@ -459,15 +452,90 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
         
         if not df_insyn.empty:
             st.success(f"🟢 Hittade {len(df_insyn)} tunga insynsköp den senaste tiden!")
-            # Formatera snyggt för användaren
             df_insyn['Värde (SEK)'] = df_insyn['Värde (SEK)'].apply(lambda x: f"{x:,.0f} kr".replace(',', ' '))
             st.dataframe(df_insyn, use_container_width=True)
         else:
             st.warning("Inga större insynsköp registrerade de senaste 14 dagarna, eller så är Finansinspektionens register tillfälligt nere.")
             
     st.markdown("---")
+    
+    # --- DEL 2: KORTSIKTIGT MOMENTUM & ANALYTIKERRÅD ---
     st.subheader("📈 Kortsiktigt Momentum & Analytikerråd")
-    st.info("🔜 *Del 2 av Blixt-signaler. Denna modul byggs i nästa steg och kommer flagga för aktier som gör plötsliga volym-utbrott eller får kraftigt höjda riktkurser av analyshus.*")
+    st.markdown("""
+    **Hur fungerar detta?**
+    Vi använder din uppladdade Börsdata-fil för att hämta marknadens starkaste aktier just nu. Koden skannar sedan dessa för att hitta aktier som gör ett kortsiktigt utbrott (prisökning + extrem volym) samt kontrollerar vad de stora analyshusen (bankerna) sätter för riktkurs.
+    
+    *Letar efter:*
+    1. **Kort momentum:** Kursen har stigit de senaste 5 handelsdagarna.
+    2. **Volymspik:** Handelsvolymen är just nu betydligt högre än det normala 20-dagarssnittet (stora aktörer köper).
+    """)
+    
+    if uppladdad_fil:
+        if st.button("⚡ Kör Blixt-scan (Söker utbrott i marknaden)", type="primary"):
+            with st.spinner("Scannar marknaden... Detta kan ta ca 30-60 sekunder..."):
+                df_bd, k_namn, k_tick, k_kurs = ladda_och_tvatta_basdata(uppladdad_fil)
+                
+                # För att inte appen ska krascha/timea ut, tar vi de 40 aktier med bäst 3-månaders momentum i filen.
+                k_3m = next((c for c in df_bd.columns if '3m' in c.lower()), None)
+                if k_3m:
+                    df_bd[k_3m] = pd.to_numeric(df_bd[k_3m], errors='coerce').fillna(0)
+                    kandidater = df_bd.nlargest(40, k_3m)
+                else:
+                    kandidater = df_bd.head(40) 
+
+                utbrott_lista = []
+                
+                rek_map = {
+                    'strong_buy': 'Starkt Köp', 'buy': 'Köp', 'hold': 'Behåll', 
+                    'sell': 'Sälj', 'strong_sell': 'Starkt Sälj', 'none': 'Ingen data'
+                }
+
+                for _, row in kandidater.iterrows():
+                    t = str(row[k_tick]).upper().strip()
+                    yf_ticker = t.replace(" ", "-") if "." in t.replace(" ", "-") else f"{t.replace(' ', '-')}.ST"
+                    try:
+                        aktie = yf.Ticker(yf_ticker)
+                        hist = aktie.history(period="1mo")
+                        if len(hist) > 20:
+                            senaste_kurs = float(hist['Close'].iloc[-1])
+                            kurs_5d_sen = float(hist['Close'].iloc[-6])
+                            
+                            utveckling_5d = ((senaste_kurs / kurs_5d_sen) - 1) * 100
+                            
+                            volym_snitt = float(hist['Volume'].tail(20).mean())
+                            volym_senaste = float(hist['Volume'].iloc[-1])
+                            volym_ratio = volym_senaste / volym_snitt if volym_snitt > 0 else 0
+                            
+                            info = aktie.info
+                            riktkurs = info.get('targetMeanPrice', 0)
+                            rekommendation = info.get('recommendationKey', 'N/A')
+                            rekommendation_sve = rek_map.get(str(rekommendation).lower(), str(rekommendation).capitalize())
+                            
+                            uppsida = ((riktkurs / senaste_kurs) - 1) * 100 if riktkurs > 0 else 0
+
+                            # Flaggar om aktien har stigit på 5 dagar OCH volymen är minst 20% över normala snittet
+                            if utveckling_5d > 0 and volym_ratio > 1.2:
+                                utbrott_lista.append({
+                                    "Bolag": row[k_namn],
+                                    "Ticker": t,
+                                    "Utv (5 dagar)": f"{utveckling_5d:.1f} %",
+                                    "Volymspik": f"{volym_ratio:.1f}x normal volym",
+                                    "Analytiker Rek.": rekommendation_sve,
+                                    "Uppsida Riktkurs": f"{uppsida:+.1f} %" if riktkurs > 0 else "N/A",
+                                    "_sort_score": utveckling_5d * volym_ratio
+                                })
+                    except:
+                        pass
+                
+                if utbrott_lista:
+                    df_utbrott = pd.DataFrame(utbrott_lista)
+                    df_utbrott = df_utbrott.sort_values(by="_sort_score", ascending=False).drop(columns=["_sort_score"]).reset_index(drop=True)
+                    st.success(f"🔥 Hittade {len(df_utbrott)} aktier med tydligt kortsiktigt utbrott!")
+                    st.dataframe(df_utbrott, use_container_width=True)
+                else:
+                    st.warning("Hittade inga aktier med tydliga utbrott just nu. Marknaden kanske är avvaktande, eller så sker ingen onormal volymhandel idag.")
+    else:
+        st.info("👈 Vänligen ladda upp din Börsdata-export i sidomenyn för att kunna scanna marknaden efter utbrott.")
 
 # --- SIDA 2: PORTFÖLJANALYS & RÅDGIVARE ---
 elif meny_val == "🧠 Portföljanalys & Råd":
