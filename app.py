@@ -11,7 +11,7 @@ import plotly.express as px
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.21", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.22", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -157,6 +157,44 @@ def radera_varning_gspread(ticker):
     except:
         return False
 
+# --- NY MODUL: INSYNSHANDEL (FINANSINSPEKTIONEN) ---
+@st.cache_data(ttl=3600) # Sparar i minnet i 1 timme för att slippa ladda vid varje klick
+def hamta_fi_insynshandel():
+    try:
+        # Hämtar data från de senaste 14 dagarna
+        tom_datum = datetime.now().strftime("%Y-%m-%d")
+        from_datum = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
+        
+        # Direktlänk till FI:s dolda CSV-export
+        url = f"https://marknadssok.fi.se/publiceringsklient/sv-SE/Search/Search?SearchFunctionType=Insyn&Publiceringsdatum.From={from_datum}&Publiceringsdatum.To={tom_datum}&button=export&exporttype=csv"
+        
+        # FI kodar ofta sina filer i utf-16le
+        df = pd.read_csv(url, sep=';', encoding='utf-16le', on_bad_lines='skip')
+        
+        # Rensa bort allt utom rena aktieköp (Förvärv)
+        df = df[df['Transaktionskaraktär'].astype(str).str.contains('Förvärv', case=False, na=False)]
+        
+        # Vaska fram tunga insynspersoner (filtrera bort småchefer)
+        tunga_roller = ['VD', 'Verkställande direktör', 'Styrelseledamot', 'Styrelseordförande', 'CFO']
+        df = df[df['Befattning'].astype(str).str.contains('|'.join(tunga_roller), case=False, na=False)]
+        
+        # Fixa sifferformat (FI använder kommatecken för decimaler)
+        df['Volym'] = pd.to_numeric(df['Volym'].astype(str).str.replace(',', '.').str.replace(' ', ''), errors='coerce').fillna(0)
+        df['Pris'] = pd.to_numeric(df['Pris'].astype(str).str.replace(',', '.').str.replace(' ', ''), errors='coerce').fillna(0)
+        
+        # Beräkna totalt ordervärde
+        df['Värde (SEK)'] = df['Volym'] * df['Pris']
+        
+        # Visa bara "riktiga" transaktioner över 100 000 SEK (ta bort fusk/småköp)
+        df = df[df['Värde (SEK)'] >= 100000]
+        
+        # Välj ut relevanta kolumner och snygga till
+        cols = ['Publiceringsdatum', 'Utgivare', 'Person i ledande ställning', 'Befattning', 'Värde (SEK)']
+        df = df[cols].sort_values('Publiceringsdatum', ascending=False).reset_index(drop=True)
+        return df
+    except Exception as e:
+        return pd.DataFrame() # Returnerar tom tabell om FI:s server är nere
+
 # ==========================================
 # 2. GLOBAL DATASANERING, SESSION STATE & TIDSMASKIN
 # ==========================================
@@ -217,6 +255,7 @@ meny_val = st.sidebar.radio(
     "Välj vy:",
     [
         "📊 Översikt & Historik", 
+        "⚡ Blixt-signaler & Insyn", # NY SIDORUBRIK
         "🧠 Portföljanalys & Råd",
         "💼 Min Portfölj", 
         "📅 Säsongsmönster & Viktning", 
@@ -330,14 +369,12 @@ if meny_val == "📊 Översikt & Historik":
             
             st.markdown("---")
             
-            # --- NY INTERAKTIV GRAFIK (PLOTLY) ---
             st.subheader("📊 Interaktiv Portföljgrafik")
             st.markdown("De 'tvära kasten' uppstår i vanliga procent-grafer när du flyttar kapital mellan strategierna. För att ge dig en sann och inspirerande överblick har vi delat upp grafiken i två intelligenta vyer:")
             
             tab_sek, tab_proc = st.tabs(["💰 Kapital & Fördelning (SEK)", "📈 Totalavkastning vs Index (%)"])
             
             with tab_sek:
-                # Stacked Area (Ytgraf)
                 df_area = hist_df[['datum', 'varde_value', 'varde_utdelning', 'varde_momentum']].copy()
                 df_area = df_area.rename(columns={'varde_value': 'Value', 'varde_utdelning': 'Utdelning', 'varde_momentum': 'Momentum'})
                 df_melt = df_area.melt(id_vars='datum', var_name='Strategi', value_name='Värde (SEK)')
@@ -351,7 +388,6 @@ if meny_val == "📊 Översikt & Historik":
                 st.plotly_chart(fig_area, use_container_width=True)
                 
             with tab_proc:
-                # Linjegraf enbart för Total vs OMXSPI
                 df_line = hist_df[['datum', 'portfolj_varde', 'omx_index']].copy()
                 
                 start_port = df_line[df_line['portfolj_varde'] > 0]['portfolj_varde'].iloc[0] if not df_line[df_line['portfolj_varde'] > 0].empty else 1
@@ -369,7 +405,6 @@ if meny_val == "📊 Översikt & Historik":
                 )
                 fig_line.update_layout(hovermode='x unified', xaxis_title="Datum", yaxis_title="Utveckling sedan start (%)")
                 st.plotly_chart(fig_line, use_container_width=True)
-            # -----------------------------------
             
         st.subheader("Historisk datatabell")
         st.dataframe(hist_df.rename(columns={'datum': 'Datum', 'varde_value': 'Value (SEK)', 'varde_utdelning': 'Utdelning (SEK)', 'varde_momentum': 'Momentum (SEK)', 'portfolj_varde': 'Total Portfölj (SEK)', 'omx_index': 'OMXSPI Index'}), use_container_width=True)
@@ -399,6 +434,40 @@ if meny_val == "📊 Översikt & Historik":
                                 st.rerun()
                         else: st.error("Kunde inte hitta indexkurs.")
                     except Exception as e: st.error(f"Fel: {e}")
+
+# --- NY SIDA: BLIXT-SIGNALER & INSYN ---
+elif meny_val == "⚡ Blixt-signaler & Insyn":
+    st.title("⚡ Blixt-signaler & Kortsiktig Edge")
+    
+    # Textruta som förklarar funktionen kort & väsentligt
+    st.info("""
+    **Vad gör den här sidan?**
+    Här hittar du snabba, konkreta händelser som kan driva en aktie uppåt i närtid. Istället för tunga årsrapporter scannar vi marknaden efter "smart money".
+    """)
+    
+    st.subheader("🔎 Insynshandel (Finansinspektionen)")
+    st.markdown("""
+    **Varför är detta viktigt?**
+    När en VD eller Styrelseordförande köper aktier för egna pengar finns det ofta bara en anledning: de tror att kursen ska upp. Denna radar hämtar live-data från Finansinspektionen (senaste 14 dagarna) och skalar bort bruset.
+    * **Endast Köp:** Vi struntar i försäljningar (som kan bero på skatt/husköp) och bonusprogram.
+    * **Endast Tungviktare:** Bara VD, CFO och styrelseledamöter visas.
+    * **Rejäla summor:** Endast investeringar över 100 000 SEK flaggas.
+    """)
+    
+    with st.spinner("Hämtar live-data från Finansinspektionen..."):
+        df_insyn = hamta_fi_insynshandel()
+        
+        if not df_insyn.empty:
+            st.success(f"🟢 Hittade {len(df_insyn)} tunga insynsköp den senaste tiden!")
+            # Formatera snyggt för användaren
+            df_insyn['Värde (SEK)'] = df_insyn['Värde (SEK)'].apply(lambda x: f"{x:,.0f} kr".replace(',', ' '))
+            st.dataframe(df_insyn, use_container_width=True)
+        else:
+            st.warning("Inga större insynsköp registrerade de senaste 14 dagarna, eller så är Finansinspektionens register tillfälligt nere.")
+            
+    st.markdown("---")
+    st.subheader("📈 Kortsiktigt Momentum & Analytikerråd")
+    st.info("🔜 *Del 2 av Blixt-signaler. Denna modul byggs i nästa steg och kommer flagga för aktier som gör plötsliga volym-utbrott eller får kraftigt höjda riktkurser av analyshus.*")
 
 # --- SIDA 2: PORTFÖLJANALYS & RÅDGIVARE ---
 elif meny_val == "🧠 Portföljanalys & Råd":
