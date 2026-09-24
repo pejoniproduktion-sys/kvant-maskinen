@@ -13,7 +13,7 @@ import io
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.23", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.24", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -159,7 +159,47 @@ def radera_varning_gspread(ticker):
     except:
         return False
 
-# --- NY MODUL: INSYNSHANDEL (FINANSINSPEKTIONEN) ---
+# --- NYA FUNKTIONER FÖR BLIXT-SIGNALER-DATABAS ---
+def ladda_blixt_signaler_gspread():
+    try:
+        gc = get_gspread_client()
+        sh = gc.open_by_url(st.secrets["google_sheet_url"])
+        try:
+            worksheet = sh.worksheet("Blixt_Signaler")
+        except:
+            worksheet = sh.add_worksheet(title="Blixt_Signaler", rows="100", cols="8")
+            worksheet.append_row(["Datum", "Strategi", "Bolag", "Ticker", "Utv (5 dagar)", "Volymspik", "Analytiker Rek.", "Uppsida Riktkurs"])
+            return pd.DataFrame(columns=["Datum", "Strategi", "Bolag", "Ticker", "Utv (5 dagar)", "Volymspik", "Analytiker Rek.", "Uppsida Riktkurs"])
+        
+        data = worksheet.get_all_records()
+        if not data:
+            return pd.DataFrame(columns=["Datum", "Strategi", "Bolag", "Ticker", "Utv (5 dagar)", "Volymspik", "Analytiker Rek.", "Uppsida Riktkurs"])
+        return pd.DataFrame(data)
+    except:
+        return pd.DataFrame()
+
+def spara_blixt_signaler_gspread(df_ny):
+    try:
+        gc = get_gspread_client()
+        sh = gc.open_by_url(st.secrets["google_sheet_url"])
+        worksheet = sh.worksheet("Blixt_Signaler")
+        if not df_ny.empty:
+            worksheet.append_rows(df_ny.values.tolist(), value_input_option='USER_ENTERED')
+        return True
+    except:
+        return False
+
+def rensa_blixt_signaler_gspread():
+    try:
+        gc = get_gspread_client()
+        sh = gc.open_by_url(st.secrets["google_sheet_url"])
+        worksheet = sh.worksheet("Blixt_Signaler")
+        worksheet.clear()
+        worksheet.append_row(["Datum", "Strategi", "Bolag", "Ticker", "Utv (5 dagar)", "Volymspik", "Analytiker Rek.", "Uppsida Riktkurs"])
+        return True
+    except:
+        return False
+
 @st.cache_data(ttl=3600)
 def hamta_fi_insynshandel():
     try:
@@ -167,7 +207,6 @@ def hamta_fi_insynshandel():
         from_datum = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
         url = f"https://marknadssok.fi.se/publiceringsklient/sv-SE/Search/Search?SearchFunctionType=Insyn&Publiceringsdatum.From={from_datum}&Publiceringsdatum.To={tom_datum}&button=export&exporttype=csv"
         
-        # Säkerställ anslutning med User-Agent för att undvika att FI blockerar anropet
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         response = requests.get(url, headers=headers, timeout=10)
         response.encoding = 'utf-16le'
@@ -430,7 +469,7 @@ if meny_val == "📊 Översikt & Historik":
                         else: st.error("Kunde inte hitta indexkurs.")
                     except Exception as e: st.error(f"Fel: {e}")
 
-# --- NY SIDA: BLIXT-SIGNALER & INSYN ---
+# --- SIDA: BLIXT-SIGNALER & INSYN ---
 elif meny_val == "⚡ Blixt-signaler & Insyn":
     st.title("⚡ Blixt-signaler & Kortsiktig Edge")
     
@@ -463,32 +502,73 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
     st.subheader("📈 Kortsiktigt Momentum & Analytikerråd")
     st.markdown("""
     **Hur fungerar detta?**
-    Vi använder din uppladdade Börsdata-fil för att hämta marknadens starkaste aktier just nu. Koden skannar sedan dessa för att hitta aktier som gör ett kortsiktigt utbrott (prisökning + extrem volym) samt kontrollerar vad de stora analyshusen (bankerna) sätter för riktkurs.
-    
-    *Letar efter:*
-    1. **Kort momentum:** Kursen har stigit de senaste 5 handelsdagarna.
-    2. **Volymspik:** Handelsvolymen är just nu betydligt högre än det normala 20-dagarssnittet (stora aktörer köper).
+    Välj vilken portfölj-strategi du vill utgå ifrån nedan. Koden letar upp dina 40 bästa bolag enligt den valda strategin i din Börsdata-fil, och letar sedan enbart bland dessa efter kortsiktiga **utbrott** (pris + volymspik) och analytikernas aktuella riktkurs.
+    Resultaten ackumuleras i en separat databas-flik i din Google Sheet så att du kan sköta dina månadsscreeningar i lugn och ro utan att information skrivs över.
     """)
     
+    df_sparade_signaler = ladda_blixt_signaler_gspread()
+    
+    if not df_sparade_signaler.empty:
+        st.write("### 🗄️ Din Blixt-Signal Databas")
+        st.dataframe(df_sparade_signaler, use_container_width=True)
+        if st.button("🗑️ Rensa gamla signaler (Starta ny månad)", type="secondary"):
+            with st.spinner("Rensar Google Sheet..."):
+                rensa_blixt_signaler_gspread()
+                st.rerun()
+    else:
+        st.info("Din databas för blixt-signaler är för närvarande tom. Kör en scanning nedan för att fylla den!")
+        
+    st.markdown("---")
+    
     if uppladdad_fil:
-        if st.button("⚡ Kör Blixt-scan (Söker utbrott i marknaden)", type="primary"):
-            with st.spinner("Scannar marknaden... Detta kan ta ca 30-60 sekunder..."):
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            vald_scan_strat = st.selectbox("Välj strategi att scanna för utbrott:", ["Value", "Utdelning", "Momentum"])
+        with c2:
+            st.write("") 
+            st.write("") 
+            korscan = st.button(f"⚡ Kör Blixt-scan för {vald_scan_strat}", type="primary", use_container_width=True)
+            
+        if korscan:
+            with st.spinner(f"Bearbetar Börsdata-filen och vaskar fram Top 40 för {vald_scan_strat}..."):
                 df_bd, k_namn, k_tick, k_kurs = ladda_och_tvatta_basdata(uppladdad_fil)
                 
-                # För att inte appen ska krascha/timea ut, tar vi de 40 aktier med bäst 3-månaders momentum i filen.
-                k_3m = next((c for c in df_bd.columns if '3m' in c.lower()), None)
-                if k_3m:
-                    df_bd[k_3m] = pd.to_numeric(df_bd[k_3m], errors='coerce').fillna(0)
-                    kandidater = df_bd.nlargest(40, k_3m)
-                else:
-                    kandidater = df_bd.head(40) 
+                # Applicera vald strategi för att ta fram Top 40 kandidater
+                if vald_scan_strat == "Value":
+                    v_kols = ['P/E - Senaste', 'P/S - Senaste', 'P/B - Senaste', 'P/FCF - Senaste', 'EV/EBITDA - Senaste']
+                    for k in v_kols:
+                        if k in df_bd.columns: 
+                            df_bd[k] = pd.to_numeric(df_bd[k], errors='coerce').fillna(5000)
+                            df_bd[k] = df_bd[k].apply(lambda x: 5000 if x <= 0 else x)
+                        else: 
+                            df_bd[k] = 5000
+                        df_bd[f'Rank_{k}'] = df_bd[k].rank(ascending=True, method='min')
+                    df_bd['Total_Rank'] = df_bd[[f'Rank_{k}' for k in v_kols]].sum(axis=1) / len(v_kols)
+                    kandidater = df_bd.nsmallest(40, 'Total_Rank')
+                    
+                elif vald_scan_strat == "Utdelning":
+                    k_utd = 'Direktav. - Senaste'
+                    if k_utd in df_bd.columns:
+                        df_bd[k_utd] = pd.to_numeric(df_bd[k_utd], errors='coerce').fillna(0)
+                        kandidater = df_bd.nlargest(40, k_utd)
+                    else:
+                        kandidater = df_bd.head(40)
+                        
+                else: # Momentum
+                    k_3m = next((c for c in df_bd.columns if '3m' in c.lower()), df_bd.columns[0])
+                    k_6m = next((c for c in df_bd.columns if '6m' in c.lower()), df_bd.columns[0])
+                    k_12m = next((c for c in df_bd.columns if '1år' in c.lower() or '12m' in c.lower()), df_bd.columns[0])
+                    df_bd['S_Momentum'] = (pd.to_numeric(df_bd[k_3m], errors='coerce').fillna(0) + pd.to_numeric(df_bd[k_6m], errors='coerce').fillna(0) + pd.to_numeric(df_bd[k_12m], errors='coerce').fillna(0)) / 3
+                    kandidater = df_bd.nlargest(40, 'S_Momentum')
 
+            with st.spinner("Scannar marknaden i realtid efter volymutbrott och analytikerråd... Detta kan ta ca 30-60 sekunder..."):
                 utbrott_lista = []
-                
                 rek_map = {
                     'strong_buy': 'Starkt Köp', 'buy': 'Köp', 'hold': 'Behåll', 
                     'sell': 'Sälj', 'strong_sell': 'Starkt Sälj', 'none': 'Ingen data'
                 }
+
+                dagens_datum = datetime.now().strftime("%Y-%m-%d")
 
                 for _, row in kandidater.iterrows():
                     t = str(row[k_tick]).upper().strip()
@@ -516,6 +596,8 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
                             # Flaggar om aktien har stigit på 5 dagar OCH volymen är minst 20% över normala snittet
                             if utveckling_5d > 0 and volym_ratio > 1.2:
                                 utbrott_lista.append({
+                                    "Datum": dagens_datum,
+                                    "Strategi": vald_scan_strat,
                                     "Bolag": row[k_namn],
                                     "Ticker": t,
                                     "Utv (5 dagar)": f"{utveckling_5d:.1f} %",
@@ -529,11 +611,17 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
                 
                 if utbrott_lista:
                     df_utbrott = pd.DataFrame(utbrott_lista)
-                    df_utbrott = df_utbrott.sort_values(by="_sort_score", ascending=False).drop(columns=["_sort_score"]).reset_index(drop=True)
-                    st.success(f"🔥 Hittade {len(df_utbrott)} aktier med tydligt kortsiktigt utbrott!")
-                    st.dataframe(df_utbrott, use_container_width=True)
+                    df_utbrott = df_utbrott.sort_values(by="_sort_score", ascending=False)
+                    
+                    df_to_save = df_utbrott.drop(columns=["_sort_score"])
+                    
+                    if spara_blixt_signaler_gspread(df_to_save):
+                        st.success(f"🔥 Hittade {len(df_utbrott)} {vald_scan_strat}-aktier med tydligt kortsiktigt utbrott! Sparat i databasen.")
+                        st.rerun()
+                    else:
+                        st.error("Hittade resultat, men kunde inte spara dem till Google Sheets.")
                 else:
-                    st.warning("Hittade inga aktier med tydliga utbrott just nu. Marknaden kanske är avvaktande, eller så sker ingen onormal volymhandel idag.")
+                    st.warning(f"Hittade inga {vald_scan_strat}-aktier med tydliga utbrott just nu.")
     else:
         st.info("👈 Vänligen ladda upp din Börsdata-export i sidomenyn för att kunna scanna marknaden efter utbrott.")
 
