@@ -13,7 +13,7 @@ import io
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.25", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.26", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -159,7 +159,6 @@ def radera_varning_gspread(ticker):
     except:
         return False
 
-# Ny funktion för automatisk validering av MA200-återhämtningar
 @st.cache_data(ttl=3600)
 def check_tickers_ma200(tickers):
     result = {}
@@ -366,7 +365,7 @@ if meny_val == "📊 Översikt & Historik":
                 for t in tickers_to_check:
                     if live_status.get(t, False):
                         st.session_state['aterhamtade_ma200'].add(t)
-                        radera_varning_gspread(t) # Raderar permanent från Google Sheets
+                        radera_varning_gspread(t)
                         
         aktiva_rader = [row for _, row in auto_warn_df.iterrows() if row['Ticker'] not in st.session_state['aterhamtade_ma200']]
 
@@ -540,7 +539,6 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
             
     st.markdown("---")
     
-    # --- DEL 2: KORTSIKTIGT MOMENTUM & ANALYTIKERRÅD ---
     st.subheader("📈 Kortsiktigt Momentum & Analytikerråd")
     st.markdown("""
     **Hur fungerar detta?**
@@ -936,16 +934,41 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
     mal_vikter = hamta_malviktning(nuvarande_manad)
     
     varden = {}
+    investerat = {}
+    kassa = {}
     total_nu = 0.0
     
     for s in strategier:
         df = st.session_state[f'bef_portfolj_{s}']
-        summa = (df['Antal'] * df['Kurs']).sum()
-        varden[s] = float(summa)
-        total_nu += float(summa)
+        
+        # Dela upp i aktier och kassa
+        df_inv = df[df['Ticker'] != 'KASSA']
+        df_k = df[df['Ticker'] == 'KASSA']
+        
+        inv_sum = (df_inv['Antal'] * df_inv['Kurs']).sum() if not df_inv.empty else 0.0
+        k_sum = (df_k['Antal'] * df_k['Kurs']).sum() if not df_k.empty else 0.0
+        
+        investerat[s] = float(inv_sum)
+        kassa[s] = float(k_sum)
+        varden[s] = float(inv_sum + k_sum)
+        total_nu += float(inv_sum + k_sum)
         
     nu_vikter = {s: (varden[s]/total_nu if total_nu > 0 else 0.0) for s in strategier}
+    inv_vikter = {s: (investerat[s]/total_nu if total_nu > 0 else 0.0) for s in strategier}
+    kassa_vikter = {s: (kassa[s]/total_nu if total_nu > 0 else 0.0) for s in strategier}
 
+    # Övergripande Sammanställning
+    tot_inv = sum(investerat.values())
+    tot_k = sum(kassa.values())
+    tot_inv_pct = (tot_inv / total_nu * 100) if total_nu > 0 else 0
+    tot_k_pct = (tot_k / total_nu * 100) if total_nu > 0 else 0
+    
+    c_top1, c_top2, c_top3 = st.columns(3)
+    c_top1.metric("💼 Total Portfölj", f"{total_nu:,.0f} kr".replace(',', ' '))
+    c_top2.metric("📈 Totalt Investerat", f"{tot_inv:,.0f} kr".replace(',', ' '), f"{tot_inv_pct:.1f}%")
+    c_top3.metric("💵 Total Ledig Kassa", f"{tot_k:,.0f} kr".replace(',', ' '), f"{tot_k_pct:.1f}%")
+
+    st.markdown("---")
     st.write("📊 **Jämförelse: Din Nuvarande Portfölj vs. Rekommenderad Målvikt**")
     
     if total_nu > 0:
@@ -966,7 +989,9 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
 
             with cols[i]:
                 st.markdown(f"### {s}")
-                st.markdown(f"Nuv: **{nu_vikt*100:.1f}%** ➔ Mål: **{mal_vikt*100:.0f}%**")
+                st.markdown(f"Total nuvarande vikt: **{nu_vikt*100:.1f}%** ➔ Mål: **{mal_vikt*100:.0f}%**")
+                st.caption(f"📉 *Varav investerat i aktier: {inv_vikter[s]*100:.1f}%*")
+                st.caption(f"💵 *Varav outnyttjad kassa: {kassa_vikter[s]*100:.1f}%*")
                 st.markdown(f"Tydlig signal: {signal}")
                 st.progress(min(float(nu_vikt), 1.0), text="Din reella vikt")
                 st.progress(float(mal_vikt), text="Optimal målvikt")
