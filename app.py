@@ -13,7 +13,7 @@ import io
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.24", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.25", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -159,6 +159,24 @@ def radera_varning_gspread(ticker):
     except:
         return False
 
+# Ny funktion för automatisk validering av MA200-återhämtningar
+@st.cache_data(ttl=3600)
+def check_tickers_ma200(tickers):
+    result = {}
+    for t in tickers:
+        yf_ticker = t.replace(" ", "-") if "." in t.replace(" ", "-") else f"{t.replace(' ', '-')}.ST"
+        try:
+            hist = yf.Ticker(yf_ticker).history(period="1y")
+            if not hist.empty and len(hist) > 150:
+                ma200 = hist['Close'].tail(200).mean()
+                senaste_kurs = hist['Close'].iloc[-1]
+                result[t] = senaste_kurs > ma200
+            else:
+                result[t] = False
+        except:
+            result[t] = False
+    return result
+
 # --- NYA FUNKTIONER FÖR BLIXT-SIGNALER-DATABAS ---
 def ladda_blixt_signaler_gspread():
     try:
@@ -240,6 +258,9 @@ def hamta_effektiv_manad():
 
 strategier = ["Value", "Utdelning", "Momentum"]
 
+if 'aterhamtade_ma200' not in st.session_state:
+    st.session_state['aterhamtade_ma200'] = set()
+
 for s in strategier:
     if f'bef_portfolj_{s}' not in st.session_state:
         st.session_state[f'bef_portfolj_{s}'] = ladda_innehav_gspread(s)
@@ -301,7 +322,7 @@ meny_val = st.sidebar.radio(
     ]
 )
 st.sidebar.markdown("---")
-svartlista_input = st.sidebar.text_input("🛑 Manuell Svartlista (kommaseparerat)", value="", help="Tvinga bort specifika bolag helt. Skriv tickers, t.ex: HUM, SBB B")
+svartlista_input = st.sidebar.text_input("🛑 Manuell Svartlista (kommaseparerat)", value="HUM", help="Tvinga bort specifika bolag helt. Skriv tickers, t.ex: HUM, SBB B")
 svartlista = [x.strip().upper() for x in svartlista_input.split(',')] if svartlista_input.strip() else []
 st.sidebar.markdown("---")
 uppladdad_fil = st.sidebar.file_uploader("Ladda upp Börsdata-fil", type=["xlsx", "csv"])
@@ -333,13 +354,34 @@ if meny_val == "📊 Översikt & Historik":
     st.title("📊 Portföljöversikt & Dashboard")
     
     auto_warn_df = ladda_automatisk_ma200_gspread()
-    if auto_warn_df.empty:
-        st.success("🟢 **Trendindikator (MA200):** Alla dina innehav handlas just nu över sin långsiktiga trend (MA200).")
+    aktiva_rader = []
+    
+    if not auto_warn_df.empty:
+        tickers_in_sheet = auto_warn_df['Ticker'].tolist()
+        tickers_to_check = [t for t in tickers_in_sheet if t not in st.session_state['aterhamtade_ma200']]
+        
+        if tickers_to_check:
+            with st.spinner("Validerar live-kurser för MA200-varningar..."):
+                live_status = check_tickers_ma200(tuple(tickers_to_check))
+                for t in tickers_to_check:
+                    if live_status.get(t, False):
+                        st.session_state['aterhamtade_ma200'].add(t)
+                        radera_varning_gspread(t) # Raderar permanent från Google Sheets
+                        
+        aktiva_rader = [row for _, row in auto_warn_df.iterrows() if row['Ticker'] not in st.session_state['aterhamtade_ma200']]
+
+    if st.session_state['aterhamtade_ma200']:
+        aterh_str = ", ".join(st.session_state['aterhamtade_ma200'])
+        st.success(f"🎉 **Goda nyheter!** Följande aktier har återhämtat sig och handlas nu **över** MA200 igen: **{aterh_str}**. Varningen har plockats bort automatiskt.")
+        
+    if not aktiva_rader:
+        if not st.session_state['aterhamtade_ma200']:
+            st.success("🟢 **Trendindikator (MA200):** Alla dina innehav handlas just nu över sin långsiktiga trend (MA200).")
     else:
-        st.error(f"🔴 **Trendindikator (MA200):** {len(auto_warn_df)} aktier handlas just nu under sin långsiktiga trend!")
+        st.error(f"🔴 **Trendindikator (MA200):** {len(aktiva_rader)} aktier handlas just nu under sin långsiktiga trend!")
         with st.expander("Visa varningslista 🚨", expanded=True):
             st.info("💡 När du har sålt en aktie eller uppmärksammat varningen kan du klicka på 'Kvittera' nedan för att dölja den från listan.")
-            for idx, row in auto_warn_df.iterrows():
+            for idx, row in enumerate(aktiva_rader):
                 aktie = row.get('Aktie', 'Okänd')
                 ticker = row.get('Ticker', '-')
                 avv = row.get('Avvikelse', '-')
@@ -533,7 +575,6 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
             with st.spinner(f"Bearbetar Börsdata-filen och vaskar fram Top 40 för {vald_scan_strat}..."):
                 df_bd, k_namn, k_tick, k_kurs = ladda_och_tvatta_basdata(uppladdad_fil)
                 
-                # Applicera vald strategi för att ta fram Top 40 kandidater
                 if vald_scan_strat == "Value":
                     v_kols = ['P/E - Senaste', 'P/S - Senaste', 'P/B - Senaste', 'P/FCF - Senaste', 'EV/EBITDA - Senaste']
                     for k in v_kols:
@@ -554,7 +595,7 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
                     else:
                         kandidater = df_bd.head(40)
                         
-                else: # Momentum
+                else: 
                     k_3m = next((c for c in df_bd.columns if '3m' in c.lower()), df_bd.columns[0])
                     k_6m = next((c for c in df_bd.columns if '6m' in c.lower()), df_bd.columns[0])
                     k_12m = next((c for c in df_bd.columns if '1år' in c.lower() or '12m' in c.lower()), df_bd.columns[0])
@@ -593,7 +634,6 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
                             
                             uppsida = ((riktkurs / senaste_kurs) - 1) * 100 if riktkurs > 0 else 0
 
-                            # Flaggar om aktien har stigit på 5 dagar OCH volymen är minst 20% över normala snittet
                             if utveckling_5d > 0 and volym_ratio > 1.2:
                                 utbrott_lista.append({
                                     "Datum": dagens_datum,
