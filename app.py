@@ -13,7 +13,7 @@ import io
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.26", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.27", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -619,7 +619,7 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
                             senaste_kurs = float(hist['Close'].iloc[-1])
                             kurs_5d_sen = float(hist['Close'].iloc[-6])
                             
-                            utveckling_5d = ((senaste_kurs / kurs_5d_sen) - 1) * 100
+                            utveckling_5d = ((senaste_kurs / calculate) - 1) * 100
                             
                             volym_snitt = float(hist['Volume'].tail(20).mean())
                             volym_senaste = float(hist['Volume'].iloc[-1])
@@ -927,11 +927,15 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
     nuvarande_manad = hamta_effektiv_manad()
     manader = ["Januari", "Februari", "Mars", "April", "Maj", "Juni", "Juli", "Augusti", "September", "Oktober", "November", "December"]
     manad_namn = manader[nuvarande_manad - 1]
+    nasta_manad = (nuvarande_manad % 12) + 1
+    namn_nasta = manader[nasta_manad - 1]
     
     idag = datetime.now()
     framatblick = " (Framåtblickande)" if idag.day >= 25 else ""
     st.subheader(f"📍 Analys för {manad_namn}{framatblick}")
+    
     mal_vikter = hamta_malviktning(nuvarande_manad)
+    vikter_sen = hamta_malviktning(nasta_manad)
     
     varden = {}
     investerat = {}
@@ -941,7 +945,6 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
     for s in strategier:
         df = st.session_state[f'bef_portfolj_{s}']
         
-        # Dela upp i aktier och kassa
         df_inv = df[df['Ticker'] != 'KASSA']
         df_k = df[df['Ticker'] == 'KASSA']
         
@@ -957,7 +960,6 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
     inv_vikter = {s: (investerat[s]/total_nu if total_nu > 0 else 0.0) for s in strategier}
     kassa_vikter = {s: (kassa[s]/total_nu if total_nu > 0 else 0.0) for s in strategier}
 
-    # Övergripande Sammanställning
     tot_inv = sum(investerat.values())
     tot_k = sum(kassa.values())
     tot_inv_pct = (tot_inv / total_nu * 100) if total_nu > 0 else 0
@@ -995,37 +997,27 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
                 st.markdown(f"Tydlig signal: {signal}")
                 st.progress(min(float(nu_vikt), 1.0), text="Din reella vikt")
                 st.progress(float(mal_vikt), text="Optimal målvikt")
+                
+                st.write("")
+                st.markdown(f"**🔭 Radar inför {namn_nasta.lower()}**")
+                
+                diff_framat = vikter_sen[s] - mal_vikter[s]
+                
+                if diff_framat > 0:
+                    if s == "Utdelning" and mal_vikter[s] == 0:
+                        st.success(f"🌱 **Smygstart:** Vi går från 0% till {vikter_sen[s]*100:.0f}%. Dags att leta kandidater!")
+                    else:
+                        st.success(f"📈 **Ökas:** Målviktningen höjs från {mal_vikter[s]*100:.0f}% till {vikter_sen[s]*100:.0f}%. Du kan frontspringa och fylla på portföljen redan nu.")
+                elif diff_framat < 0:
+                    if s == "Utdelning" and vikter_sen[s] == 0:
+                        st.error("🛑 **Nollas:** Stänger portföljen helt. Sälj av innan sommartorkan drar igång.")
+                    else:
+                        st.warning(f"📉 **Minskas:** Målviktningen sänks från {mal_vikter[s]*100:.0f}% till {vikter_sen[s]*100:.0f}%. Börja fundera på vilka innehav du ska sälja.")
+                else:
+                    st.info(f"Ingen förändring planerad till {namn_nasta.lower()}. Vi håller fast vid nuvarande strategivikt.")
 
     st.markdown("---")
-    st.subheader("🔭 Radar: Förberedelser inför nästa månad")
-    
-    nasta_manad = (nuvarande_manad % 12) + 1
-    namn_nasta = manader[nasta_manad - 1]
-    
-    vikter_nu = mal_vikter
-    vikter_sen = hamta_malviktning(nasta_manad)
-    
-    if vikter_nu == vikter_sen:
-        st.info(f"Inga strategiskiften planerade för nästa månadsskifte (till **{namn_nasta.lower()}**). Vi håller fast vid nuvarande strategivikter.")
-    else:
-        st.write(f"Nästa månadsskifte (till **{namn_nasta.lower()}**) sker följande större skiften i Kvant-maskinen. Genom att veta detta redan nu kan du frontspringa marknaden:")
-        
-        for s in strategier:
-            diff_framat = vikter_sen[s] - vikter_nu[s]
-            
-            if diff_framat > 0:
-                if s == "Utdelning" and vikter_nu[s] == 0:
-                    st.success(f"🌱 **Smygstart för {s}:** Vi går från **{vikter_nu[s]*100:.0f}% till {vikter_sen[s]*100:.0f}%**. Dags att damma av utdelningslistorna och börja leta köpkandidater innan massan vaknar!")
-                else:
-                    st.success(f"📈 **Dags att öka {s}:** Målviktningen höjs från **{vikter_nu[s]*100:.0f}% till {vikter_sen[s]*100:.0f}%**. Du kan med fördel börja fylla på portföljen redan nu.")
-            
-            elif diff_framat < 0:
-                if s == "Utdelning" and vikter_sen[s] == 0:
-                    st.error(f"🛑 **Säljvarning för {s}:** Vi stänger portföljen helt (från **{vikter_nu[s]*100:.0f}% till 0%**). Gör dig redo att sälja av och flytta kapitalet innan sommartorkan drar igång.")
-                else:
-                    st.warning(f"📉 **Dags att minska {s}:** Målviktningen sänks från **{vikter_nu[s]*100:.0f}% till {vikter_sen[s]*100:.0f}%**. Börja fundera på vilka av dina svagaste innehav du ska sälja av.")
-
-    st.markdown("---")
+    st.subheader("💡 Makroperspektiv (Aktuell Säsong)")
     if nuvarande_manad in [11, 12, 1]:
         st.success("❄️ **Fokus: Value-Rallyt (Starta Utdelning tidigt)**\n\nBästa möjliga miljö för Värdebolag. Nedpressade bolag säljs av fonder innan nyår och köps tillbaka i januari (Januari-effekten). Samtidigt börjar vi nu **smygköpa utdelningsaktier** innan massan vaknar i vår.")
     elif nuvarande_manad in [2, 3, 4]:
