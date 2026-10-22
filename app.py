@@ -9,11 +9,12 @@ from google.oauth2.service_account import Credentials
 import plotly.express as px
 import requests
 import io
+import re
 
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.27", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.28", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -224,27 +225,48 @@ def hamta_fi_insynshandel():
         from_datum = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
         url = f"https://marknadssok.fi.se/publiceringsklient/sv-SE/Search/Search?SearchFunctionType=Insyn&Publiceringsdatum.From={from_datum}&Publiceringsdatum.To={tom_datum}&button=export&exporttype=csv"
         
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        response = requests.get(url, headers=headers, timeout=10)
-        response.encoding = 'utf-16le'
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(url, headers=headers, timeout=15)
         
-        df = pd.read_csv(io.StringIO(response.text), sep=';', on_bad_lines='skip')
-        df = df[df['Transaktionskaraktär'].astype(str).str.contains('Förvärv', case=False, na=False)]
+        # FI:s servrar varierar ibland teckenkodning. Försök med UTF-16LE, därefter UTF-8.
+        try:
+            df = pd.read_csv(io.StringIO(response.content.decode('utf-16le')), sep=';', on_bad_lines='skip')
+        except:
+            df = pd.read_csv(io.StringIO(response.content.decode('utf-8-sig')), sep=';', on_bad_lines='skip')
+            
+        df.columns = df.columns.str.strip()
         
+        # Dynamisk sökning av kolumner (skyddar mot om FI döper om kolumner framöver)
+        karaktar_col = next((c for c in df.columns if 'karaktär' in c.lower()), None)
+        befattning_col = next((c for c in df.columns if 'befattning' in c.lower()), None)
+        volym_col = next((c for c in df.columns if 'volym' in c.lower() and 'enhet' not in c.lower()), None)
+        pris_col = next((c for c in df.columns if 'pris' in c.lower()), None)
+        
+        if not all([karaktar_col, befattning_col, volym_col, pris_col]):
+            return pd.DataFrame()
+            
+        # Filtrera endast fram köp (Förvärv)
+        df = df[df[karaktar_col].astype(str).str.contains('Förvärv', case=False, na=False)]
+        
+        # Håll oss endast till tyngre insiders
         tunga_roller = ['VD', 'Verkställande direktör', 'Styrelseledamot', 'Styrelseordförande', 'CFO']
-        df = df[df['Befattning'].astype(str).str.contains('|'.join(tunga_roller), case=False, na=False)]
+        df = df[df[befattning_col].astype(str).str.contains('|'.join(tunga_roller), case=False, na=False)]
         
-        df['Volym'] = pd.to_numeric(df['Volym'].astype(str).str.replace(',', '.').str.replace(' ', ''), errors='coerce').fillna(0)
-        df['Pris'] = pd.to_numeric(df['Pris'].astype(str).str.replace(',', '.').str.replace(' ', ''), errors='coerce').fillna(0)
+        # Rensa hårda mellanslag (\xa0) och kommatecken från siffrorna för säker matematik
+        df[volym_col] = pd.to_numeric(df[volym_col].astype(str).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0)
+        df[pris_col] = pd.to_numeric(df[pris_col].astype(str).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0)
         
-        df['Värde (SEK)'] = df['Volym'] * df['Pris']
+        df['Värde (SEK)'] = df[volym_col] * df[pris_col]
         df = df[df['Värde (SEK)'] >= 100000]
         
-        cols = ['Publiceringsdatum', 'Utgivare', 'Person i ledande ställning', 'Befattning', 'Värde (SEK)']
-        df = df[cols].sort_values('Publiceringsdatum', ascending=False).reset_index(drop=True)
+        cols_to_keep = ['Publiceringsdatum', 'Utgivare', 'Person i ledande ställning', befattning_col, 'Värde (SEK)']
+        cols_to_keep = [c for c in cols_to_keep if c in df.columns]
+        
+        df = df[cols_to_keep].sort_values('Publiceringsdatum', ascending=False).reset_index(drop=True)
         return df
     except Exception as e:
-        return pd.DataFrame() 
+        # Vid framtida fel kan du skriva ut felet här för debugging
+        return pd.DataFrame()
 
 # ==========================================
 # 2. GLOBAL DATASANERING, SESSION STATE & TIDSMASKIN
@@ -619,7 +641,7 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
                             senaste_kurs = float(hist['Close'].iloc[-1])
                             kurs_5d_sen = float(hist['Close'].iloc[-6])
                             
-                            utveckling_5d = ((senaste_kurs / calculate) - 1) * 100
+                            utveckling_5d = ((senaste_kurs / kurs_5d_sen) - 1) * 100
                             
                             volym_snitt = float(hist['Volume'].tail(20).mean())
                             volym_senaste = float(hist['Volume'].iloc[-1])
