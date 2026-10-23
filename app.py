@@ -14,7 +14,7 @@ import re
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.28", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.29", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -228,7 +228,6 @@ def hamta_fi_insynshandel():
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(url, headers=headers, timeout=15)
         
-        # FI:s servrar varierar ibland teckenkodning. Försök med UTF-16LE, därefter UTF-8.
         try:
             df = pd.read_csv(io.StringIO(response.content.decode('utf-16le')), sep=';', on_bad_lines='skip')
         except:
@@ -236,36 +235,44 @@ def hamta_fi_insynshandel():
             
         df.columns = df.columns.str.strip()
         
-        # Dynamisk sökning av kolumner (skyddar mot om FI döper om kolumner framöver)
+        # Dynamisk sökning av kolumner
+        utgivare_col = next((c for c in df.columns if 'utgivare' in c.lower() or 'bolag' in c.lower()), None)
         karaktar_col = next((c for c in df.columns if 'karaktär' in c.lower()), None)
         befattning_col = next((c for c in df.columns if 'befattning' in c.lower()), None)
         volym_col = next((c for c in df.columns if 'volym' in c.lower() and 'enhet' not in c.lower()), None)
         pris_col = next((c for c in df.columns if 'pris' in c.lower()), None)
+        datum_col = next((c for c in df.columns if 'publiceringsdatum' in c.lower()), None)
+        person_col = next((c for c in df.columns if 'person i ledande' in c.lower()), None)
         
         if not all([karaktar_col, befattning_col, volym_col, pris_col]):
             return pd.DataFrame()
             
-        # Filtrera endast fram köp (Förvärv)
         df = df[df[karaktar_col].astype(str).str.contains('Förvärv', case=False, na=False)]
         
-        # Håll oss endast till tyngre insiders
-        tunga_roller = ['VD', 'Verkställande direktör', 'Styrelseledamot', 'Styrelseordförande', 'CFO']
+        tunga_roller = ['VD', 'Verkställande direktör', 'Styrelseledamot', 'Styrelseordförande', 'CFO', 'Vice VD']
         df = df[df[befattning_col].astype(str).str.contains('|'.join(tunga_roller), case=False, na=False)]
         
-        # Rensa hårda mellanslag (\xa0) och kommatecken från siffrorna för säker matematik
         df[volym_col] = pd.to_numeric(df[volym_col].astype(str).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0)
         df[pris_col] = pd.to_numeric(df[pris_col].astype(str).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0)
         
         df['Värde (SEK)'] = df[volym_col] * df[pris_col]
         df = df[df['Värde (SEK)'] >= 100000]
         
-        cols_to_keep = ['Publiceringsdatum', 'Utgivare', 'Person i ledande ställning', befattning_col, 'Värde (SEK)']
+        # Döper om till rena, korta kolumnnamn för tabellen
+        rename_dict = {}
+        if datum_col: rename_dict[datum_col] = 'Datum'
+        if utgivare_col: rename_dict[utgivare_col] = 'Bolag'
+        if person_col: rename_dict[person_col] = 'Person'
+        if befattning_col: rename_dict[befattning_col] = 'Befattning'
+        
+        df = df.rename(columns=rename_dict)
+        
+        cols_to_keep = ['Datum', 'Bolag', 'Person', 'Befattning', 'Värde (SEK)']
         cols_to_keep = [c for c in cols_to_keep if c in df.columns]
         
-        df = df[cols_to_keep].sort_values('Publiceringsdatum', ascending=False).reset_index(drop=True)
+        df = df[cols_to_keep].sort_values('Datum', ascending=False).reset_index(drop=True)
         return df
     except Exception as e:
-        # Vid framtida fel kan du skriva ut felet här för debugging
         return pd.DataFrame()
 
 # ==========================================
