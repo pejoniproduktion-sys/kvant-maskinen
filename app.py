@@ -14,7 +14,7 @@ import re
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.29", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v6.30", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -233,45 +233,43 @@ def hamta_fi_insynshandel():
         except:
             df = pd.read_csv(io.StringIO(response.content.decode('utf-8-sig')), sep=';', on_bad_lines='skip')
             
-        df.columns = df.columns.str.strip()
+        orig_cols = df.columns.tolist()
         
-        # Dynamisk sökning av kolumner
-        utgivare_col = next((c for c in df.columns if 'utgivare' in c.lower() or 'bolag' in c.lower()), None)
-        karaktar_col = next((c for c in df.columns if 'karaktär' in c.lower()), None)
-        befattning_col = next((c for c in df.columns if 'befattning' in c.lower()), None)
-        volym_col = next((c for c in df.columns if 'volym' in c.lower() and 'enhet' not in c.lower()), None)
-        pris_col = next((c for c in df.columns if 'pris' in c.lower()), None)
-        datum_col = next((c for c in df.columns if 'publiceringsdatum' in c.lower()), None)
-        person_col = next((c for c in df.columns if 'person i ledande' in c.lower()), None)
+        # Mappa till gemener och rensa specialtecken/mellanslag för skottsäker identifiering
+        clean_cols = [str(c).lower().replace(' ', '').replace('ä', 'a').replace('ö', 'o').replace('å', 'a') for c in orig_cols]
+        col_map = dict(zip(clean_cols, orig_cols))
+        
+        utgivare_col = col_map.get(next((c for c in clean_cols if 'utgivare' in c or 'bolag' in c or 'emittent' in c), None))
+        karaktar_col = col_map.get(next((c for c in clean_cols if 'karaktar' in c or 'transaktionstyp' in c), None))
+        befattning_col = col_map.get(next((c for c in clean_cols if 'befattning' in c or 'roll' in c), None))
+        volym_col = col_map.get(next((c for c in clean_cols if 'volym' in c and 'enhet' not in c), None))
+        pris_col = col_map.get(next((c for c in clean_cols if 'pris' in c), None))
+        datum_col = col_map.get(next((c for c in clean_cols if 'datum' in c), None))
+        person_col = col_map.get(next((c for c in clean_cols if 'person' in c or 'skyldig' in c), None))
         
         if not all([karaktar_col, befattning_col, volym_col, pris_col]):
             return pd.DataFrame()
             
-        df = df[df[karaktar_col].astype(str).str.contains('Förvärv', case=False, na=False)]
+        df = df[df[karaktar_col].astype(str).str.contains('Förvärv|Köp', case=False, regex=True, na=False)]
         
-        tunga_roller = ['VD', 'Verkställande direktör', 'Styrelseledamot', 'Styrelseordförande', 'CFO', 'Vice VD']
+        tunga_roller = ['VD', 'Verkställande', 'Styrelseledamot', 'Styrelseordförande', 'CFO', 'Vice VD']
         df = df[df[befattning_col].astype(str).str.contains('|'.join(tunga_roller), case=False, na=False)]
         
-        df[volym_col] = pd.to_numeric(df[volym_col].astype(str).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0)
-        df[pris_col] = pd.to_numeric(df[pris_col].astype(str).str.replace(r'\s+', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0)
+        df[volym_col] = pd.to_numeric(df[volym_col].astype(str).str.replace(r'[^0-9,.-]', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0)
+        df[pris_col] = pd.to_numeric(df[pris_col].astype(str).str.replace(r'[^0-9,.-]', '', regex=True).str.replace(',', '.'), errors='coerce').fillna(0)
         
         df['Värde (SEK)'] = df[volym_col] * df[pris_col]
         df = df[df['Värde (SEK)'] >= 100000]
         
-        # Döper om till rena, korta kolumnnamn för tabellen
-        rename_dict = {}
-        if datum_col: rename_dict[datum_col] = 'Datum'
-        if utgivare_col: rename_dict[utgivare_col] = 'Bolag'
-        if person_col: rename_dict[person_col] = 'Person'
-        if befattning_col: rename_dict[befattning_col] = 'Befattning'
+        # Bygg upp en helt ny och ren tabell för UI
+        res_df = pd.DataFrame()
+        res_df['Datum'] = df[datum_col] if datum_col else ""
+        res_df['Bolag'] = df[utgivare_col] if utgivare_col else "Okänt Bolag"
+        res_df['Person'] = df[person_col] if person_col else ""
+        res_df['Befattning'] = df[befattning_col] if befattning_col else ""
+        res_df['Värde (SEK)'] = df['Värde (SEK)']
         
-        df = df.rename(columns=rename_dict)
-        
-        cols_to_keep = ['Datum', 'Bolag', 'Person', 'Befattning', 'Värde (SEK)']
-        cols_to_keep = [c for c in cols_to_keep if c in df.columns]
-        
-        df = df[cols_to_keep].sort_values('Datum', ascending=False).reset_index(drop=True)
-        return df
+        return res_df.sort_values('Datum', ascending=False).reset_index(drop=True)
     except Exception as e:
         return pd.DataFrame()
 
@@ -474,7 +472,6 @@ if meny_val == "📊 Översikt & Historik":
             st.markdown("---")
             
             st.subheader("📊 Interaktiv Portföljgrafik")
-            st.markdown("De 'tvära kasten' uppstår i vanliga procent-grafer när du flyttar kapital mellan strategierna. För att ge dig en sann och inspirerande överblick har vi delat upp grafiken i två intelligenta vyer:")
             
             tab_sek, tab_proc = st.tabs(["💰 Kapital & Fördelning (SEK)", "📈 Totalavkastning vs Index (%)"])
             
@@ -511,13 +508,13 @@ if meny_val == "📊 Översikt & Historik":
                 st.plotly_chart(fig_line, use_container_width=True)
             
         st.subheader("Historisk datatabell")
-        st.dataframe(hist_df.rename(columns={'datum': 'Datum', 'varde_value': 'Value (SEK)', 'varde_utdelning': 'Utdelning (SEK)', 'varde_momentum': 'Momentum (SEK)', 'portfolj_varde': 'Total Portfölj (SEK)', 'omx_index': 'OMXSPI Index'}), use_container_width=True)
+        hist_disp = hist_df.rename(columns={'datum': 'Datum', 'varde_value': 'Value (SEK)', 'varde_utdelning': 'Utdelning (SEK)', 'varde_momentum': 'Momentum (SEK)', 'portfolj_varde': 'Total Portfölj (SEK)', 'omx_index': 'OMXSPI Index'})
+        st.dataframe(hist_disp, use_container_width=True, hide_index=True)
     else: st.warning("Kalkylarket är tomt.")
     
     st.markdown("---")
     
     with st.expander("⚙️ Nödverktyg: Logga värde per kvantstrategi manuellt"):
-        st.info("Din dagliga robot gör detta automatiskt kl 18:00 varje kväll, men du kan använda detta formulär om du vill logga data manuellt mitt på dagen.")
         with st.form("logga_varde"):
             valt_datum = st.date_input("Välj datum", datetime.now())
             v_value = st.number_input("Värde: Trending Value (SEK)", min_value=0.0, step=1000.0)
@@ -543,18 +540,7 @@ if meny_val == "📊 Översikt & Historik":
 elif meny_val == "⚡ Blixt-signaler & Insyn":
     st.title("⚡ Blixt-signaler & Kortsiktig Edge")
     
-    st.info("""
-    **Vad gör den här sidan?**
-    Här hittar du snabba, konkreta händelser som kan driva en aktie uppåt i närtid. Istället för tunga årsrapporter scannar vi marknaden efter "smart money" och volymutbrott.
-    """)
-    
     st.subheader("🔎 Insynshandel (Finansinspektionen)")
-    st.markdown("""
-    **Varför är detta viktigt?** När en VD eller Styrelseordförande köper aktier för egna pengar finns det ofta bara en anledning: de tror att kursen ska upp. Denna radar hämtar live-data från Finansinspektionen (senaste 14 dagarna) och skalar bort bruset.
-    * **Endast Köp:** Vi struntar i försäljningar (som kan bero på skatt/husköp) och bonusprogram.
-    * **Endast Tungviktare:** Bara VD, CFO och styrelseledamöter visas.
-    * **Rejäla summor:** Endast investeringar över 100 000 SEK flaggas.
-    """)
     
     with st.spinner("Hämtar live-data från Finansinspektionen..."):
         df_insyn = hamta_fi_insynshandel()
@@ -562,24 +548,18 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
         if not df_insyn.empty:
             st.success(f"🟢 Hittade {len(df_insyn)} tunga insynsköp den senaste tiden!")
             df_insyn['Värde (SEK)'] = df_insyn['Värde (SEK)'].apply(lambda x: f"{x:,.0f} kr".replace(',', ' '))
-            st.dataframe(df_insyn, use_container_width=True)
+            st.dataframe(df_insyn, use_container_width=True, hide_index=True)
         else:
             st.warning("Inga större insynsköp registrerade de senaste 14 dagarna, eller så är Finansinspektionens register tillfälligt nere.")
             
     st.markdown("---")
-    
     st.subheader("📈 Kortsiktigt Momentum & Analytikerråd")
-    st.markdown("""
-    **Hur fungerar detta?**
-    Välj vilken portfölj-strategi du vill utgå ifrån nedan. Koden letar upp dina 40 bästa bolag enligt den valda strategin i din Börsdata-fil, och letar sedan enbart bland dessa efter kortsiktiga **utbrott** (pris + volymspik) och analytikernas aktuella riktkurs.
-    Resultaten ackumuleras i en separat databas-flik i din Google Sheet så att du kan sköta dina månadsscreeningar i lugn och ro utan att information skrivs över.
-    """)
     
     df_sparade_signaler = ladda_blixt_signaler_gspread()
     
     if not df_sparade_signaler.empty:
         st.write("### 🗄️ Din Blixt-Signal Databas")
-        st.dataframe(df_sparade_signaler, use_container_width=True)
+        st.dataframe(df_sparade_signaler, use_container_width=True, hide_index=True)
         if st.button("🗑️ Rensa gamla signaler (Starta ny månad)", type="secondary"):
             with st.spinner("Rensar Google Sheet..."):
                 rensa_blixt_signaler_gspread()
@@ -629,7 +609,7 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
                     df_bd['S_Momentum'] = (pd.to_numeric(df_bd[k_3m], errors='coerce').fillna(0) + pd.to_numeric(df_bd[k_6m], errors='coerce').fillna(0) + pd.to_numeric(df_bd[k_12m], errors='coerce').fillna(0)) / 3
                     kandidater = df_bd.nlargest(40, 'S_Momentum')
 
-            with st.spinner("Scannar marknaden i realtid efter volymutbrott och analytikerråd... Detta kan ta ca 30-60 sekunder..."):
+            with st.spinner("Scannar marknaden... Detta kan ta ca 30-60 sekunder..."):
                 utbrott_lista = []
                 rek_map = {
                     'strong_buy': 'Starkt Köp', 'buy': 'Köp', 'hold': 'Behåll', 
@@ -679,7 +659,6 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
                 if utbrott_lista:
                     df_utbrott = pd.DataFrame(utbrott_lista)
                     df_utbrott = df_utbrott.sort_values(by="_sort_score", ascending=False)
-                    
                     df_to_save = df_utbrott.drop(columns=["_sort_score"])
                     
                     if spara_blixt_signaler_gspread(df_to_save):
@@ -690,7 +669,7 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
                 else:
                     st.warning(f"Hittade inga {vald_scan_strat}-aktier med tydliga utbrott just nu.")
     else:
-        st.info("👈 Vänligen ladda upp din Börsdata-export i sidomenyn för att kunna scanna marknaden efter utbrott.")
+        st.info("👈 Vänligen ladda upp din Börsdata-export i sidomenyn.")
 
 # --- SIDA 2: PORTFÖLJANALYS & RÅDGIVARE ---
 elif meny_val == "🧠 Portföljanalys & Råd":
@@ -706,15 +685,10 @@ elif meny_val == "🧠 Portföljanalys & Råd":
         with c2:
             with st.expander("⚡ Tvångskör ny analys direkt"):
                 st.markdown("""
-                **Så här gör du en manuell körning:**
-                Tack vare att vi lade in `workflow_dispatch` i din kod kan du när som helst be roboten göra en blixtanalys.
-                
                 1. Öppna ditt repo på **GitHub**.
                 2. Klicka på fliken **Actions** i toppmenyn.
                 3. Välj ditt workflow i vänsterspalten (t.ex. *AI-Analys*).
                 4. Klicka på knappen **Run workflow** (till höger).
-                
-                *Roboten startar direkt och den nya dagsfärska analysen dyker upp här i appen inom ett par minuter!*
                 """)
                 
         if ai_datum:
@@ -730,11 +704,6 @@ elif meny_val == "🧠 Portföljanalys & Råd":
     hist_df = ladda_historik_gspread()
     if len(hist_df) >= 5:
         with st.expander("🔗 Strategiernas Inbördes Korrelation (Samsvar)", expanded=True):
-            st.markdown("""
-            **💡 Enkel förklaring:** Tanken med att ha tre olika strategier är att de ska fungera som krockkuddar för varandra. Om börsen straffar *Value-aktier*, vill vi att *Momentum-aktierna* står emot fallet.
-            * **Nära 1.0:** Strategierna beter sig som tvillingar. Går den ena ner, dras den andra med (Dåligt skydd).
-            * **Under 0.7:** Strategierna går sin egen väg och balanserar upp varandra på ett bra sätt (Bra skydd!).
-            """)
             try:
                 corr_df = hist_df[['varde_value', 'varde_utdelning', 'varde_momentum']].pct_change().corr()
                 corr_df.columns = ['Value (Värde)', 'Utdelning', 'Momentum']
@@ -743,14 +712,6 @@ elif meny_val == "🧠 Portföljanalys & Råd":
             except:
                 st.warning("Kunde inte beräkna korrelation. Kräver mer historisk data i arket.")
 
-    st.markdown("""
-    **💡 Vad betyder riskmåtten för aktierna nedan?**
-    * 📉 **Årlig Volatilitet:** Hur "stökig" är aktien? Hög procent (%) betyder att aktiens pris åker en vild berg-och-dalbana. Låg procent betyder en lugn och stabil tågresa.
-    * 🏆 **Sharpekvot:** Är vinsten värd risken (magontet)? 
-        * **Under 1.0:** Nja, du tar mycket risk för relativt lite vinst.
-        * **Över 1.0:** Bra! Du får en fin vinst i förhållande till risken.
-        * **Över 2.0:** Exceptionellt! Hög vinst med väldigt lite dramatik.
-    """)
     if st.button("📊 Beräkna risknyckeltal för innehav", type="secondary"):
         with st.spinner("Hämtar historisk data och analyserar..."):
             risk_data = []
@@ -785,17 +746,16 @@ elif meny_val == "🧠 Portföljanalys & Råd":
             if risk_data:
                 df_risk = pd.DataFrame(risk_data)
                 df_risk = df_risk.sort_values(by="_sort_sharpe", ascending=False).drop(columns=["_sort_sharpe"]).reset_index(drop=True)
-                st.dataframe(df_risk, use_container_width=True)
+                st.dataframe(df_risk, use_container_width=True, hide_index=True)
             else:
                 st.warning("Hittade inga aktiva innehav.")
 
     st.markdown("---")
     
     st.subheader("🚨 Trendbevakning (Manuell MA200-scanning)")
-    st.write("Klicka nedan för att göra en direkt-scanning i realtid av dina innehav mot MA200.")
     
     if st.button("Kör manuell scanning nu", type="primary"):
-        with st.spinner("Hämtar historisk data och analyserar MA200 för hela portföljen..."):
+        with st.spinner("Hämtar historisk data..."):
             varningar = []
             for s in strategier:
                 df = st.session_state[f'bef_portfolj_{s}']
@@ -825,7 +785,7 @@ elif meny_val == "🧠 Portföljanalys & Råd":
                 df_v['Kurs'] = df_v['Kurs'].apply(lambda x: f"{x:.2f} kr")
                 df_v['MA200'] = df_v['MA200'].apply(lambda x: f"{x:.2f} kr")
                 df_v['Avvikelse'] = df_v['Avvikelse'].apply(lambda x: f"{x:.1f} %")
-                st.dataframe(df_v, use_container_width=True)
+                st.dataframe(df_v, use_container_width=True, hide_index=True)
             else:
                 st.success("✅ Alla dina aktier handlas över sitt MA200 för tillfället!")
 
@@ -837,7 +797,7 @@ elif meny_val == "💼 Min Portfölj":
     
     vald = st.selectbox("Välj portfölj att hantera:", strategier, index=strategier.index(st.session_state['aktiv_strategi']))
     st.session_state['aktiv_strategi'] = vald 
-    st.dataframe(st.session_state[f'bef_portfolj_{vald}'], use_container_width=True)
+    st.dataframe(st.session_state[f'bef_portfolj_{vald}'], use_container_width=True, hide_index=True)
     
     st.markdown("### 🛠 Hantera innehav")
     c1, c2, c3 = st.columns(3)
@@ -879,8 +839,6 @@ elif meny_val == "💼 Min Portfölj":
                         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                     st.session_state[f'bef_portfolj_{vald}'] = df
                     st.rerun()
-                    
-            st.markdown(f"**💡 Kom ihåg att klicka på 'Spara {vald}-portföljen' (knappen längst ner)** när du har gjort dina ändringar!")
                     
     with c2:
         with st.expander("❌ Ta bort aktie"):
@@ -1045,42 +1003,12 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
                 else:
                     st.info(f"Ingen förändring planerad till {namn_nasta.lower()}. Vi håller fast vid nuvarande strategivikt.")
 
-    st.markdown("---")
-    st.subheader("💡 Makroperspektiv (Aktuell Säsong)")
-    if nuvarande_manad in [11, 12, 1]:
-        st.success("❄️ **Fokus: Value-Rallyt (Starta Utdelning tidigt)**\n\nBästa möjliga miljö för Värdebolag. Nedpressade bolag säljs av fonder innan nyår och köps tillbaka i januari (Januari-effekten). Samtidigt börjar vi nu **smygköpa utdelningsaktier** innan massan vaknar i vår.")
-    elif nuvarande_manad in [2, 3, 4]:
-        st.success("🌱 **Fokus: Maxa Utdelning & Rida Momentum**\n\nDetta är utdelningsjägarnas absoluta guldålder! Kapital roterar aggressivt in i högutdelare fram till X-dagen. Momentum-strategin plockar också upp de starkaste trenderna efter Q4-rapporterna.")
-    elif nuvarande_manad in [5, 6, 7, 8]:
-        st.error("☀️ **Fokus: SÄLJ UTDELNING! (Defensiv Sommar)**\n\n'Sell in May and go away'. Utdelningssäsongen är över och aktierna faller ofta mer än utdelningen gav. **Vi nollar utdelningsportföljen helt (0%)** och parkerar pengarna i tryggare Value och urstarka Momentum-trender över sommaren.")
-    elif nuvarande_manad in [9, 10]:
-        st.info("🍂 **Fokus: Maxa Momentum**\n\nLikviditeten är tillbaka på börsen efter semestrarna. Q3-rapporterna etablerar nya dominanta vinnare på marknaden. Vi struntar fortsatt i utdelningar och rider uteslutande på råstyrka och momentum.")
-
 # --- SIDA 5: OM STRATEGIERNA ---
 elif meny_val == "📖 Om Kvantstrategierna":
     st.title("📖 Dokumentation av Kvantstrategierna")
-    st.markdown("""
-    *Gemensamt grundkrav för alla strategier:*
-    * **Storlek:** Börsvärde >= 500 MSEK.
-    * **Listor:** Endast Large, Mid och Small Cap.
-    """)
     st.header("📈 1. Trending Value")
-    st.markdown("""
-    1. Koden rankar alla godkända bolag från 1 (billigast) och uppåt på följande nyckeltal: **P/E, P/S, P/B, P/FCF, och EV/EBITDA**.
-    2. Saknas data straffas bolaget med ett högt fiktivt värde (5000) för att hamna längst ner i rankingen. Förlustbolag (negativa värden) straffas också.
-    3. De 40 absolut billigaste bolagen plockas ut.
-    4. De 40 billigaste bolagen sorteras så och de 10 med bäst **Sammansatt Momentum** (snitt av 3m, 6m, 12m) väljs ut.
-    """)
     st.header("💸 2. Trendande Utdelning")
-    st.markdown("""
-    1. Koden plockar ut de 40 bolagen med absolut högst direktavkastning i %.
-    2. Högutdelarna sorteras efter Sammansatt Momentum. De 10 med starkast positiv trend blir din målkorg.
-    """)
     st.header("⚡ 3. Sammansatt Momentum")
-    st.markdown("""
-    1. Koden beräknar **Sammansatt Momentum** = (Utv 3m + Utv 6m + Utv 12m) / 3.
-    2. Hela börsens bolag sorteras efter detta sammansatta värde och de 10 bästa väljs rakt av.
-    """)
 
 # --- SIDA 6, 7, 8: STRATEGIKALKYLATORERNA ---
 elif "Strategi" in meny_val:
@@ -1090,8 +1018,6 @@ elif "Strategi" in meny_val:
     if uppladdad_fil:
         with st.spinner("Laddar fil och applicerar eventuell Svartlista..."):
             df, k_namn, k_tick, k_kurs = ladda_och_tvatta_basdata(uppladdad_fil)
-            
-            # --- MANUELL SVARTLISTA ---
             if svartlista:
                 df = df[~df[k_tick].astype(str).str.upper().str.strip().isin(svartlista)].copy()
             
@@ -1124,33 +1050,24 @@ elif "Strategi" in meny_val:
 
         with st.spinner("Hämtar riskanalys för bolagen..."):
             godkanda_kandidater = []
-            
             for _, row in topp_alla.iterrows():
-                if len(godkanda_kandidater) >= 10:
-                    break 
-                    
+                if len(godkanda_kandidater) >= 10: break 
                 t = str(row[k_tick]).upper().strip()
                 yf_ticker = t.replace(" ", "-") if "." in t.replace(" ", "-") else f"{t.replace(' ', '-')}.ST"
-                vol_str = "N/A"
-                sharpe_str = "N/A"
-                
+                vol_str, sharpe_str = "N/A", "N/A"
                 try:
                     aktie = yf.Ticker(yf_ticker)
                     hist = aktie.history(period="1y").dropna(subset=['Close'])
                     if len(hist) > 30:
                         returns = hist['Close'].pct_change().dropna()
-                        
                         vol = returns.std() * np.sqrt(252) * 100 
                         ann_ret = (hist['Close'].iloc[-1] / hist['Close'].iloc[0] - 1) * 100
                         sharpe = (ann_ret - 3.0) / vol if vol > 0 else 0
-                        
                         vol_status = "🟢 Stabil" if vol < 25 else ("🟡 Volatil" if vol < 40 else "🔴 Mycket orolig")
                         sharpe_status = "🟢 Utmärkt" if sharpe > 1.5 else ("🟡 Bra" if sharpe > 0.5 else "🔴 Svag")
-                        
                         vol_str = f"{vol:.1f}% ({vol_status})"
                         sharpe_str = f"{round(sharpe, 2)} ({sharpe_status})"
-                except:
-                    pass
+                except: pass
                 
                 rad = row.copy()
                 rad['Årlig Volatilitet'] = vol_str
@@ -1160,11 +1077,8 @@ elif "Strategi" in meny_val:
             topp_risk = pd.DataFrame(godkanda_kandidater)
 
         st.subheader("🚀 Topp 10 Köpkandidater (inkl. Riskanalys)")
-        
         display_cols = [k_namn, k_tick, k_kurs, 'Momentum', 'Årlig Volatilitet', 'Sharpe (Rf=3%)']
-        st.dataframe(topp_risk[display_cols].reset_index(drop=True), use_container_width=True)
-        
-        st.info("🤖 **Kom ihåg:** Kopiera Topp 10-listan ovan och be Gemini att: \n1) **Kontrollera eventuella pågående uppköpsbud**, och \n2) **Leta efter aktuella köpsignaler** för dessa bolag, innan du går vidare!")
+        st.dataframe(topp_risk[display_cols].reset_index(drop=True), use_container_width=True, hide_index=True)
         
         if st.button("⚡ Skicka Topp 10 till Ombalansering"):
             st.session_state['mal_portfolj'] = topp_risk[[k_namn, k_tick, k_kurs]].rename(columns={k_namn:"Bolagsnamn", k_tick:"Ticker", k_kurs:"Kurs"}).reset_index(drop=True)
@@ -1179,16 +1093,15 @@ elif meny_val == "⚖️ Ombalansering":
     vald_strat = st.selectbox("Välj portfölj att arbeta med:", strategier, index=strategier.index(st.session_state['aktiv_strategi']))
     st.session_state['aktiv_strategi'] = vald_strat
     
-    st.info(f"📍 Aktuellt läge: Jämför befintlig **{vald_strat}**-portfölj med dina inskickade målaktier.")
     extra_kassa = st.number_input("Nytt externt sparande att tillföra (SEK)", min_value=0, value=10000, step=1000)
     
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("1. Din Befintliga Portfölj")
-        st.dataframe(st.session_state[f'bef_portfolj_{vald_strat}'], use_container_width=True)
+        st.dataframe(st.session_state[f'bef_portfolj_{vald_strat}'], use_container_width=True, hide_index=True)
     with col2:
         st.subheader("2. Dina Nya Målaktier (Topp 10)")
-        st.dataframe(st.session_state['mal_portfolj'], use_container_width=True)
+        st.dataframe(st.session_state['mal_portfolj'], use_container_width=True, hide_index=True)
         
     if st.button("⚡ Beräkna ombalansering", type="primary"):
         df_bef = pd.DataFrame(st.session_state[f'bef_portfolj_{vald_strat}'])
@@ -1230,7 +1143,7 @@ elif meny_val == "⚖️ Ombalansering":
         st.metric("Totalt Portföljvärde (inkl. all kassa)", f"{st.session_state['tot_v']:,.0f} kr")
         st.metric("Målvärde per aktie (Lika vikt)", f"{st.session_state['mal_v']:,.0f} kr")
         st.subheader("🛒 Köp- och säljinstruktioner:")
-        st.dataframe(st.session_state['ordrar_res'], use_container_width=True)
+        st.dataframe(st.session_state['ordrar_res'], use_container_width=True, hide_index=True)
         if st.button(f"💾 Verkställ affärer & spara som mitt nya {vald_strat}-innehav"):
             with st.spinner("Sparar till Google Sheets..."):
                 if spara_innehav_gspread(st.session_state['ny_p_res'], vald_strat):
