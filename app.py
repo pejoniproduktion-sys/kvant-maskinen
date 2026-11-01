@@ -14,7 +14,7 @@ import re
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v7.0", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v7.1", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -435,7 +435,20 @@ if meny_val == "📊 Översikt & Historik":
                         st.rerun()
 
     hist_df = ladda_historik_gspread()
+    
+    # --- NYTT: TYDLIG VISUALISERING AV ROBOTENS STATUS ---
     if len(hist_df) >= 1:
+        st.markdown("---")
+        st.subheader("📸 Status för Datainsamling (Historik-Snapshot)")
+        
+        senaste_loggade_datum = str(hist_df['datum'].iloc[-1])
+        idag_str = datetime.now().strftime("%Y-%m-%d")
+        
+        if senaste_loggade_datum == idag_str:
+            st.success(f"✅ **Dagens stängningsvärde är sparat!** \n\nRoboten (eller du manuellt) har 'stämplat in' portföljens värde för **{idag_str}** i kalkylarket. Din historik-graf är helt uppdaterad. Nästa snapshot tas imorgon.")
+        else:
+            st.info(f"⏳ **Väntar på dagens stängningskurs.** \n\nDin historik-graf sträcker sig just nu fram till gårdagens snapshot (**{senaste_loggade_datum}**).\n\n*När börsen stänger ikväll kommer GitHub-roboten automatiskt att vakna, läsa av dina live-kurser från 'Min Portfölj' och fota av dagens värde till grafen. (Du kan också tvinga fram detta i förtid via 'Nödverktyg' längst ner på sidan).*")
+            
         st.markdown("---")
         st.subheader("📈 Utveckling jämfört med OMXSPI")
         if len(hist_df) >= 2:
