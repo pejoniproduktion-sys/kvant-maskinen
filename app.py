@@ -14,7 +14,7 @@ import re
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v6.30", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v7.0", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -340,7 +340,7 @@ meny_val = st.sidebar.radio(
         "🧠 Portföljanalys & Råd",
         "💼 Min Portfölj", 
         "📅 Säsongsmönster & Viktning", 
-        "📖 Om Kvantstrategierna",
+        "🛠️ Så fungerar Kvantmaskinen",
         "📈 Strategi: Trending Value", 
         "💸 Strategi: Trend. Utdelning", 
         "⚡ Strategi: Momentum", 
@@ -379,6 +379,21 @@ def ladda_och_tvatta_basdata(fil):
 if meny_val == "📊 Översikt & Historik":
     st.title("📊 Portföljöversikt & Dashboard")
     
+    # 🔴 NYTT: OMXSPI REGIM-FILTER
+    with st.spinner("Analyserar Stockholmsbörsens breda trend (OMXSPI)..."):
+        try:
+            omx_data = yf.Ticker("^OMXSPI").history(period="1y")
+            if len(omx_data) > 200:
+                omx_close = omx_data['Close'].iloc[-1]
+                omx_ma200 = omx_data['Close'].tail(200).mean()
+                if omx_close < omx_ma200:
+                    st.error(f"🚨 **BÖRSKRASCH-VARNING:** Stockholmsbörsen (OMXSPI) handlas under sitt MA200! Börsen är i en fallande regim. Överväg att stoppa nyköp och öka kassan (Risk off).")
+                else:
+                    st.success(f"🟢 **BÖRSKLIMAT:** Stockholmsbörsen (OMXSPI) handlas över sitt MA200. Bull-marknad pågår (Risk on).")
+        except:
+            st.info("Kunde inte hämta MA200 för OMXSPI för tillfället.")
+
+    
     auto_warn_df = ladda_automatisk_ma200_gspread()
     aktiva_rader = []
     
@@ -402,9 +417,9 @@ if meny_val == "📊 Översikt & Historik":
         
     if not aktiva_rader:
         if not st.session_state['aterhamtade_ma200']:
-            st.success("🟢 **Trendindikator (MA200):** Alla dina innehav handlas just nu över sin långsiktiga trend (MA200).")
+            st.success("🟢 **Trendindikator innehav:** Alla dina innehav handlas just nu över sin långsiktiga trend (MA200).")
     else:
-        st.error(f"🔴 **Trendindikator (MA200):** {len(aktiva_rader)} aktier handlas just nu under sin långsiktiga trend!")
+        st.warning(f"🔴 **Trendindikator innehav:** {len(aktiva_rader)} av dina aktier handlas just nu under sin långsiktiga trend!")
         with st.expander("Visa varningslista 🚨", expanded=True):
             st.info("💡 När du har sålt en aktie eller uppmärksammat varningen kan du klicka på 'Kvittera' nedan för att dölja den från listan.")
             for idx, row in enumerate(aktiva_rader):
@@ -581,6 +596,12 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
         if korscan:
             with st.spinner(f"Bearbetar Börsdata-filen och vaskar fram Top 40 för {vald_scan_strat}..."):
                 df_bd, k_namn, k_tick, k_kurs = ladda_och_tvatta_basdata(uppladdad_fil)
+                
+                # --- Applicera basfilter (Quality & Tillväxt) även för Blixt-signaler ---
+                k_fscore = next((c for c in df_bd.columns if 'f-score' in c.lower()), None)
+                if k_fscore:
+                    df_bd[k_fscore] = pd.to_numeric(df_bd[k_fscore], errors='coerce').fillna(0)
+                    df_bd = df_bd[df_bd[k_fscore] >= 5].copy()
                 
                 if vald_scan_strat == "Value":
                     v_kols = ['P/E - Senaste', 'P/S - Senaste', 'P/B - Senaste', 'P/FCF - Senaste', 'EV/EBITDA - Senaste']
@@ -1003,12 +1024,71 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
                 else:
                     st.info(f"Ingen förändring planerad till {namn_nasta.lower()}. Vi håller fast vid nuvarande strategivikt.")
 
-# --- SIDA 5: OM STRATEGIERNA ---
-elif meny_val == "📖 Om Kvantstrategierna":
-    st.title("📖 Dokumentation av Kvantstrategierna")
-    st.header("📈 1. Trending Value")
-    st.header("💸 2. Trendande Utdelning")
-    st.header("⚡ 3. Sammansatt Momentum")
+# --- NY SIDA: SÅ FUNGERAR KVANTMASKINEN ---
+elif meny_val == "🛠️ Så fungerar Kvantmaskinen":
+    st.title("🛠️ Maskinrummet: Så räknar roboten")
+    
+    st.markdown("""
+    Kvantmaskinen baserar sina beslut på strikta, förutbestämda regler. Genom att eliminera känslor och låta datan tala skapar vi en matematisk edge över Stockholmsbörsen (OMXSPI).
+    Här är de exakta reglerna och filtren maskinen använder för att screena och poängsätta bolagen när du laddar upp din fil från Börsdata.
+    """)
+    
+    st.markdown("---")
+    
+    st.header("1. Det Globala Basfiltret (Gäller alla strategier)")
+    st.markdown("""
+    Innan någon strategi ens får titta på ett bolag måste det passera ett stenhårt "bouncer"-filter. Detta säkerställer att vi bara handlar likvida kvalitetsbolag.
+    
+    *   **Börsvärde:** Endast bolag värderade till minst **500 Miljoner SEK**. Filtrerar bort de allra minsta förhoppningsbolagen där kursen styrs av småsparare på forum.
+    *   **Lista:** Endast bolag noterade på Large, Mid eller Small Cap. Inga listor med sämre granskning (t.ex. Spotlight eller First North).
+    *   **Piotroski F-Score (Kvalitet):** Bolaget måste ha en **F-Score på minst 5** (av 9). Detta är robotens inbyggda lögndetektor. En F-Score under 5 indikerar fallande marginaler, ökad skuldsättning eller utspädning. De bolagen slängs i papperskorgen oavsett hur billiga de är.
+    *   **Svartlista:** Om du manuellt har lagt in ett bolag (t.ex. `SBB B`) i sidomenyns svartlista, plockas det bort direkt.
+    """)
+    
+    st.markdown("---")
+    
+    st.header("📈 Strategi 1: Trending Value")
+    st.markdown("""
+    *Syfte: Hitta aktier som är absurt billiga rent fundamentalt, men där marknaden precis har börjat handla upp dem (värde + momentum).*
+    
+    1.  **Värderings-Scoring (Composite Value):** Kvantmaskinen rankar alla godkända bolag från 1 (billigast) till X (dyrast) baserat på fem olika nyckeltal:
+        *   **P/E (Price/Earnings):** Aktiekurs i förhållande till vinst.
+        *   **P/S (Price/Sales):** Aktiekurs i förhållande till försäljning.
+        *   **P/B (Price/Book):** Aktiekurs i förhållande till eget kapital (substans).
+        *   **P/FCF (Price/Free Cash Flow):** Aktiekurs i förhållande till fritt kassaflöde (faktiska pengar i handen).
+        *   **EV/EBITDA:** Företagets skuldjusterade värde i förhållande till rörelseresultatet före avskrivningar. (Ofta det bästa måttet för uppköp).
+    2.  **Straff:** Om ett bolag går med förlust (negativt värde) eller saknar data, straffar koden bolaget med ett artificiellt värde på `5000` så att det hamnar längst ner i rankingen.
+    3.  **Vaskningen:** Roboten slår ihop rankingen för alla fem nyckeltal till en *Total Rank*. De 40 aktier med lägst Total Rank går vidare till finalen.
+    4.  **Pris-Momentum (Urskiljningen):** De 40 billigaste bolagen sorteras därefter utifrån **Sammansatt Momentum** (snittet av kursutvecklingen på 3, 6 och 12 månader).
+    5.  **Resultat:** De 10 aktierna med högst momentum från värde-korgen blir din köplista.
+    """)
+    
+    st.markdown("---")
+
+    st.header("💸 Strategi 2: Trendande Utdelning")
+    st.markdown("""
+    *Syfte: Fånga bolag som delar ut mycket kontanter till ägarna, utan att kliva in i bolag där utdelningen riskerar att sänkas på grund av kris.*
+    
+    1.  **Avkastningskravet:** Maskinen sorterar alla bolag utifrån **Direktavkastning (%)**. Den plockar rakt av ut de 40 bolagen på börsen som delar ut mest (efter att basfiltret, inkl. F-score, rensat bort riskbolagen).
+    2.  **Momentum-filtret:** Hög utdelning kan vara en illusion om aktiekursen fritt faller. Koden sorterar därför dessa 40 bolag på **Sammansatt Momentum** (snittet av 3m, 6m, 12m).
+    3.  **Resultat:** De 10 bolagen som ger högst utdelning OCH befinner sig i en positiv trend (stigande aktiekurs) plockas fram till din köplista.
+    """)
+    
+    st.markdown("---")
+
+    st.header("⚡ Strategi 3: Sammansatt Momentum (Med Kvalitet & Fundamenta)")
+    st.markdown("""
+    *Syfte: Hitta marknadens absoluta vinnare just nu. Bolag som stiger kraftigt i pris, backat av en urstark underliggande affär.*
+    
+    Momentum-strategin är den mest aggressiva och bygger på att vinnare tenderar att fortsätta vinna. Men för att undvika "pump-and-dump" krävs underliggande styrka.
+    
+    1.  **Fundamentalt Momentum (Tillväxtkravet):** Bolaget måste inte bara stiga i pris på skärmen, verksamheten måste också växa. Maskinen kräver att bolaget har:
+        *   **Vinsttillväxt:** (Vinst/Aktie Utveck. 1år > 0%) – Bolaget tjänar mer pengar nu än för ett år sedan.
+        *   **Omsättningstillväxt:** (Omsättning Utveck. 1år > 0%) – Bolaget säljer för mer nu än för ett år sedan (kan inte manipuleras med bokföring lika lätt som vinst).
+    2.  **Kvalitet (Avkastning på Investerat Kapital):** Vi vill bara rida på trender i lönsamma bolag. Koden sorterar bort bolag som har låg lönsamhet genom att kräva en **ROIC (Return on Invested Capital)** överstigande 0 (eller högre, beroende på hur vi trimmar filtret). 
+    3.  **Sammansatt Pris-Momentum:** De bolag som överlever kvalitets- och tillväxtfiltret sorteras sedan på marknadens faktiska efterfrågan: **Snittet av kursutvecklingen på 3, 6 och 12 månader**. 
+    4.  **Resultat:** De 10 bolag som har högst tekniskt momentum, backat av tillväxt i både vinst och omsättning, presenteras som köpkandidater.
+    """)
 
 # --- SIDA 6, 7, 8: STRATEGIKALKYLATORERNA ---
 elif "Strategi" in meny_val:
@@ -1016,12 +1096,23 @@ elif "Strategi" in meny_val:
     strat_typ = "Value" if "Value" in meny_val else "Utdelning" if "Utdelning" in meny_val else "Momentum"
     
     if uppladdad_fil:
-        with st.spinner("Laddar fil och applicerar eventuell Svartlista..."):
+        with st.spinner("Laddar fil, applicerar Basfilter (Piotroski F-Score > 4) och Svartlista..."):
             df, k_namn, k_tick, k_kurs = ladda_och_tvatta_basdata(uppladdad_fil)
+            
+            # --- MANUELL SVARTLISTA ---
             if svartlista:
                 df = df[~df[k_tick].astype(str).str.upper().str.strip().isin(svartlista)].copy()
+                
+            # --- F-SCORE FILTER (KVALITET) ---
+            k_fscore = next((c for c in df.columns if 'f-score' in c.lower()), None)
+            if k_fscore:
+                df[k_fscore] = pd.to_numeric(df[k_fscore], errors='coerce').fillna(0)
+                df = df[df[k_fscore] >= 5].copy()
+                st.info(f"🛡️ **Kvalitetsfilter Aktivt:** Piotroski F-score filtrerade precis bort skräpbolagen. {len(df)} bolag kvarstår med stark finansiell hälsa (F-score 5-9).")
+            else:
+                st.warning("⚠️ Hittade ingen kolumn för 'F-Score' i din fil. Kvalitetsfiltret kunde inte appliceras.")
             
-            with st.spinner("Beräknar strategi..."):
+            with st.spinner(f"Beräknar {strat_typ}-algoritmen..."):
                 if strat_typ == "Value":
                     v_kols = ['P/E - Senaste', 'P/S - Senaste', 'P/B - Senaste', 'P/FCF - Senaste', 'EV/EBITDA - Senaste']
                     for k in v_kols:
@@ -1044,17 +1135,33 @@ elif "Strategi" in meny_val:
                     topp_alla = df.nlargest(40, k_utd).sort_values(by='Momentum', ascending=False)
                     
                 elif strat_typ == "Momentum":
+                    # --- Fundamentalt Momentum Filter (Tillväxt) ---
+                    k_vinst_tillv = next((c for c in df.columns if 'vinst' in c.lower() and '1år' in c.lower()), None)
+                    k_oms_tillv = next((c for c in df.columns if 'omsättning' in c.lower() and '1år' in c.lower()), None)
+                    k_roic = next((c for c in df.columns if 'roic' in c.lower()), None)
+                    
+                    if k_vinst_tillv and k_oms_tillv:
+                        df[k_vinst_tillv] = pd.to_numeric(df[k_vinst_tillv], errors='coerce').fillna(-100)
+                        df[k_oms_tillv] = pd.to_numeric(df[k_oms_tillv], errors='coerce').fillna(-100)
+                        df = df[(df[k_vinst_tillv] > 0) & (df[k_oms_tillv] > 0)].copy()
+                    
+                    if k_roic:
+                        df[k_roic] = pd.to_numeric(df[k_roic], errors='coerce').fillna(-100)
+                        df = df[df[k_roic] > 0].copy()
+                        
                     k_3m, k_6m, k_12m = next((c for c in df.columns if '3m' in c.lower()), df.columns[0]), next((c for c in df.columns if '6m' in c.lower()), df.columns[0]), next((c for c in df.columns if '1år' in c.lower() or '12m' in c.lower()), df.columns[0])
                     df['Momentum'] = (pd.to_numeric(df[k_3m], errors='coerce').fillna(0) + pd.to_numeric(df[k_6m], errors='coerce').fillna(0) + pd.to_numeric(df[k_12m], errors='coerce').fillna(0)) / 3
                     topp_alla = df.sort_values(by='Momentum', ascending=False).head(40)
 
-        with st.spinner("Hämtar riskanalys för bolagen..."):
+        with st.spinner("Hämtar historik för Sharpekvot och Volatilitet..."):
             godkanda_kandidater = []
             for _, row in topp_alla.iterrows():
                 if len(godkanda_kandidater) >= 10: break 
                 t = str(row[k_tick]).upper().strip()
                 yf_ticker = t.replace(" ", "-") if "." in t.replace(" ", "-") else f"{t.replace(' ', '-')}.ST"
                 vol_str, sharpe_str = "N/A", "N/A"
+                inverse_vol_score = 0.0001
+                
                 try:
                     aktie = yf.Ticker(yf_ticker)
                     hist = aktie.history(period="1y").dropna(subset=['Close'])
@@ -1067,31 +1174,43 @@ elif "Strategi" in meny_val:
                         sharpe_status = "🟢 Utmärkt" if sharpe > 1.5 else ("🟡 Bra" if sharpe > 0.5 else "🔴 Svag")
                         vol_str = f"{vol:.1f}% ({vol_status})"
                         sharpe_str = f"{round(sharpe, 2)} ({sharpe_status})"
+                        if vol > 0: inverse_vol_score = 1.0 / vol
                 except: pass
                 
                 rad = row.copy()
                 rad['Årlig Volatilitet'] = vol_str
                 rad['Sharpe (Rf=3%)'] = sharpe_str
+                rad['_inv_vol'] = inverse_vol_score
                 godkanda_kandidater.append(rad)
                 
             topp_risk = pd.DataFrame(godkanda_kandidater)
 
         st.subheader("🚀 Topp 10 Köpkandidater (inkl. Riskanalys)")
-        display_cols = [k_namn, k_tick, k_kurs, 'Momentum', 'Årlig Volatilitet', 'Sharpe (Rf=3%)']
+        
+        display_cols = [k_namn, k_tick, k_kurs]
+        if k_fscore in topp_risk.columns: display_cols.append(k_fscore)
+        if strat_typ == "Utdelning" and k_utd in topp_risk.columns: display_cols.append(k_utd)
+        if strat_typ == "Momentum" and k_vinst_tillv in topp_risk.columns: display_cols.append(k_vinst_tillv)
+        if strat_typ == "Momentum" and k_roic in topp_risk.columns: display_cols.append(k_roic)
+        
+        display_cols.extend(['Momentum', 'Årlig Volatilitet', 'Sharpe (Rf=3%)'])
+        
         st.dataframe(topp_risk[display_cols].reset_index(drop=True), use_container_width=True, hide_index=True)
         
         if st.button("⚡ Skicka Topp 10 till Ombalansering"):
-            st.session_state['mal_portfolj'] = topp_risk[[k_namn, k_tick, k_kurs]].rename(columns={k_namn:"Bolagsnamn", k_tick:"Ticker", k_kurs:"Kurs"}).reset_index(drop=True)
+            st.session_state['mal_portfolj'] = topp_risk.rename(columns={k_namn:"Bolagsnamn", k_tick:"Ticker", k_kurs:"Kurs"}).reset_index(drop=True)
             st.session_state['aktiv_strategi'] = strat_typ
             st.session_state['ombalansering_beraknad'] = False
-            st.success("Målaktier sparade! Gå till Ombalanserings-sidan.")
+            st.success("Målaktier sparade! Gå till Ombalanserings-sidan för att applicera Riskjusterad Viktning.")
     else: st.warning("👈 Vänligen ladda upp din Börsdata-export i sidomenyn.")
 
 # --- SIDA 9: OMBALANSERING ---
 elif meny_val == "⚖️ Ombalansering":
-    st.title("⚖️ Portföljombalansering")
+    st.title("⚖️ Portföljombalansering (Riskjusterad)")
     vald_strat = st.selectbox("Välj portfölj att arbeta med:", strategier, index=strategier.index(st.session_state['aktiv_strategi']))
     st.session_state['aktiv_strategi'] = vald_strat
+    
+    st.info("Kvantmaskinen använder **Riskjusterad Viktning (Inverse Volatility)**. Det innebär att aktier som rör sig mjukt och stabilt får en större andel av ditt kapital, medan extremt volatila aktier får en mindre pott. Detta maximerar din riskjusterade avkastning (Sharpekvot).")
     
     extra_kassa = st.number_input("Nytt externt sparande att tillföra (SEK)", min_value=0, value=10000, step=1000)
     
@@ -1101,37 +1220,56 @@ elif meny_val == "⚖️ Ombalansering":
         st.dataframe(st.session_state[f'bef_portfolj_{vald_strat}'], use_container_width=True, hide_index=True)
     with col2:
         st.subheader("2. Dina Nya Målaktier (Topp 10)")
-        st.dataframe(st.session_state['mal_portfolj'], use_container_width=True, hide_index=True)
+        df_mal = pd.DataFrame(st.session_state['mal_portfolj'])
+        if not df_mal.empty:
+            st.dataframe(df_mal[['Bolagsnamn', 'Ticker', 'Kurs']], use_container_width=True, hide_index=True)
+        else:
+            st.warning("Inga målaktier inladdade.")
         
     if st.button("⚡ Beräkna ombalansering", type="primary"):
         df_bef = pd.DataFrame(st.session_state[f'bef_portfolj_{vald_strat}'])
-        df_mal = pd.DataFrame(st.session_state['mal_portfolj'])
         
         nuvarande_aktie_varde = (df_bef['Antal'] * df_bef['Kurs']).sum() if not df_bef.empty else 0
         totalt_portfolj_varde = nuvarande_aktie_varde + extra_kassa
         antal_malbolag = len(df_mal)
         
         if antal_malbolag > 0:
-            mal_varde_per_aktie = totalt_portfolj_varde / antal_malbolag
             st.session_state['tot_v'] = totalt_portfolj_varde
-            st.session_state['mal_v'] = mal_varde_per_aktie
+            
+            # Beräkna Inverse Volatility Vikter
+            if '_inv_vol' in df_mal.columns:
+                total_inv_vol = df_mal['_inv_vol'].sum()
+                df_mal['Mål_Vikt'] = df_mal['_inv_vol'] / total_inv_vol if total_inv_vol > 0 else (1.0 / antal_malbolag)
+            else:
+                df_mal['Mål_Vikt'] = 1.0 / antal_malbolag
+                
+            df_mal['Målvärde_SEK'] = df_mal['Mål_Vikt'] * totalt_portfolj_varde
             
             ordrar, ny_p_rader = [], []
+            
+            # 1. Hitta sälj
             for _, r in df_bef.iterrows():
                 if r['Ticker'] == 'KASSA': continue
                 if r['Ticker'] not in df_mal['Ticker'].values:
-                    ordrar.append({"Bolagsnamn": r['Bolagsnamn'], "Ticker": r['Ticker'], "Handling": "🔴 SÄLJ ALLT", "Antal aktier": int(r['Antal']), "Kurs": r['Kurs']})
+                    ordrar.append({"Bolagsnamn": r['Bolagsnamn'], "Ticker": r['Ticker'], "Handling": "🔴 SÄLJ ALLT", "Antal aktier": int(r['Antal']), "Kurs": r['Kurs'], "Total_SEK": r['Antal'] * r['Kurs']})
+            
+            # 2. Hitta köp och ombalansering
             for _, r in df_mal.iterrows():
                 t, k, n = r['Ticker'], float(r['Kurs']), r['Bolagsnamn']
-                m_antal = int(mal_varde_per_aktie // k) if k > 0 else 0
-                if m_antal > 0: ny_p_rader.append({"Bolagsnamn": n, "Ticker": t, "Antal": m_antal, "Kurs": k})
+                mal_sek = r['Målvärde_SEK']
+                
+                m_antal = int(mal_sek // k) if k > 0 else 0
+                if m_antal > 0: 
+                    ny_p_rader.append({"Bolagsnamn": n, "Ticker": t, "Antal": m_antal, "Kurs": k})
+                    
                 match = df_bef[df_bef['Ticker'] == t]
                 if not match.empty:
                     nuv_a = int(match['Antal'].iloc[0])
                     diff = m_antal - nuv_a
-                    if diff > 0: ordrar.append({"Bolagsnamn": n, "Ticker": t, "Handling": "🔵 KÖP MER", "Antal aktier": int(diff), "Kurs": k})
-                    elif diff < 0: ordrar.append({"Bolagsnamn": n, "Ticker": t, "Handling": "   SÄLJ AV", "Antal aktier": int(abs(diff)), "Kurs": k})
-                else: ordrar.append({"Bolagsnamn": n, "Ticker": t, "Handling": "🟢 KÖP NY", "Antal aktier": int(m_antal), "Kurs": k})
+                    if diff > 0: ordrar.append({"Bolagsnamn": n, "Ticker": t, "Handling": "🔵 KÖP MER", "Antal aktier": int(diff), "Kurs": k, "Total_SEK": diff * k})
+                    elif diff < 0: ordrar.append({"Bolagsnamn": n, "Ticker": t, "Handling": "   SÄLJ AV", "Antal aktier": int(abs(diff)), "Kurs": k, "Total_SEK": abs(diff) * k})
+                else: 
+                    ordrar.append({"Bolagsnamn": n, "Ticker": t, "Handling": "🟢 KÖP NY", "Antal aktier": int(m_antal), "Kurs": k, "Total_SEK": m_antal * k})
                     
             st.session_state['ordrar_res'] = pd.DataFrame(ordrar)
             st.session_state['ny_p_res'] = pd.DataFrame(ny_p_rader)
@@ -1141,9 +1279,12 @@ elif meny_val == "⚖️ Ombalansering":
     if st.session_state['ombalansering_beraknad']:
         st.markdown("---")
         st.metric("Totalt Portföljvärde (inkl. all kassa)", f"{st.session_state['tot_v']:,.0f} kr")
-        st.metric("Målvärde per aktie (Lika vikt)", f"{st.session_state['mal_v']:,.0f} kr")
         st.subheader("🛒 Köp- och säljinstruktioner:")
-        st.dataframe(st.session_state['ordrar_res'], use_container_width=True, hide_index=True)
+        
+        ord_df = st.session_state['ordrar_res'].copy()
+        ord_df['Total_SEK'] = ord_df['Total_SEK'].apply(lambda x: f"{x:,.0f} kr".replace(',', ' '))
+        
+        st.dataframe(ord_df, use_container_width=True, hide_index=True)
         if st.button(f"💾 Verkställ affärer & spara som mitt nya {vald_strat}-innehav"):
             with st.spinner("Sparar till Google Sheets..."):
                 if spara_innehav_gspread(st.session_state['ny_p_res'], vald_strat):
