@@ -14,7 +14,7 @@ import re
 # ==========================================
 # 1. APPENS INSTÄLLNINGAR & GOOGLE-KOPPLING
 # ==========================================
-st.set_page_config(page_title="Kvant-Maskinen v7.1", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Kvant-Maskinen v7.2", page_icon="🚀", layout="wide")
 
 def get_gspread_client():
     creds_dict = json.loads(st.secrets["google_credentials"])
@@ -235,7 +235,6 @@ def hamta_fi_insynshandel():
             
         orig_cols = df.columns.tolist()
         
-        # Mappa till gemener och rensa specialtecken/mellanslag för skottsäker identifiering
         clean_cols = [str(c).lower().replace(' ', '').replace('ä', 'a').replace('ö', 'o').replace('å', 'a') for c in orig_cols]
         col_map = dict(zip(clean_cols, orig_cols))
         
@@ -261,7 +260,6 @@ def hamta_fi_insynshandel():
         df['Värde (SEK)'] = df[volym_col] * df[pris_col]
         df = df[df['Värde (SEK)'] >= 100000]
         
-        # Bygg upp en helt ny och ren tabell för UI
         res_df = pd.DataFrame()
         res_df['Datum'] = df[datum_col] if datum_col else ""
         res_df['Bolag'] = df[utgivare_col] if utgivare_col else "Okänt Bolag"
@@ -379,7 +377,6 @@ def ladda_och_tvatta_basdata(fil):
 if meny_val == "📊 Översikt & Historik":
     st.title("📊 Portföljöversikt & Dashboard")
     
-    # 🔴 NYTT: OMXSPI REGIM-FILTER
     with st.spinner("Analyserar Stockholmsbörsens breda trend (OMXSPI)..."):
         try:
             omx_data = yf.Ticker("^OMXSPI").history(period="1y")
@@ -436,7 +433,6 @@ if meny_val == "📊 Översikt & Historik":
 
     hist_df = ladda_historik_gspread()
     
-    # --- NYTT: TYDLIG VISUALISERING AV ROBOTENS STATUS ---
     if len(hist_df) >= 1:
         st.markdown("---")
         st.subheader("📸 Status för Datainsamling (Historik-Snapshot)")
@@ -615,6 +611,19 @@ elif meny_val == "⚡ Blixt-signaler & Insyn":
                 if k_fscore:
                     df_bd[k_fscore] = pd.to_numeric(df_bd[k_fscore], errors='coerce').fillna(0)
                     df_bd = df_bd[df_bd[k_fscore] >= 5].copy()
+                    
+                k_vinst_tillv = next((c for c in df_bd.columns if 'vinst' in c.lower() and '1år' in c.lower()), None)
+                k_oms_tillv = next((c for c in df_bd.columns if 'omsättning' in c.lower() and '1år' in c.lower()), None)
+                k_roic = next((c for c in df_bd.columns if 'roic' in c.lower()), None)
+                
+                if k_vinst_tillv and k_oms_tillv:
+                    df_bd[k_vinst_tillv] = pd.to_numeric(df_bd[k_vinst_tillv], errors='coerce').fillna(-100)
+                    df_bd[k_oms_tillv] = pd.to_numeric(df_bd[k_oms_tillv], errors='coerce').fillna(-100)
+                    df_bd = df_bd[(df_bd[k_vinst_tillv] > 0) & (df_bd[k_oms_tillv] > 0)].copy()
+                
+                if k_roic:
+                    df_bd[k_roic] = pd.to_numeric(df_bd[k_roic], errors='coerce').fillna(-100)
+                    df_bd = df_bd[df_bd[k_roic] > 0].copy()
                 
                 if vald_scan_strat == "Value":
                     v_kols = ['P/E - Senaste', 'P/S - Senaste', 'P/B - Senaste', 'P/FCF - Senaste', 'EV/EBITDA - Senaste']
@@ -1037,7 +1046,7 @@ elif meny_val == "📅 Säsongsmönster & Viktning":
                 else:
                     st.info(f"Ingen förändring planerad till {namn_nasta.lower()}. Vi håller fast vid nuvarande strategivikt.")
 
-# --- NY SIDA: SÅ FUNGERAR KVANTMASKINEN ---
+# --- SIDA: SÅ FUNGERAR KVANTMASKINEN (UPPDATERAD TEXT) ---
 elif meny_val == "🛠️ Så fungerar Kvantmaskinen":
     st.title("🛠️ Maskinrummet: Så räknar roboten")
     
@@ -1048,59 +1057,54 @@ elif meny_val == "🛠️ Så fungerar Kvantmaskinen":
     
     st.markdown("---")
     
-    st.header("1. Det Globala Basfiltret (Gäller alla strategier)")
+    st.header("1. Det Globala Basfiltret (Tillväxt & Kvalitet för alla strategier)")
     st.markdown("""
-    Innan någon strategi ens får titta på ett bolag måste det passera ett stenhårt "bouncer"-filter. Detta säkerställer att vi bara handlar likvida kvalitetsbolag.
+    Innan någon av de tre strategierna ens får titta på ett bolag måste det passera ett stenhårt "bouncer"-filter. Detta skyddar hela Kvantmaskinen från såväl värdefällor som utdelningsfällor. Varje aktie i din portfölj måste numera ha en extremt solid finansiell grund.
     
-    *   **Börsvärde:** Endast bolag värderade till minst **500 Miljoner SEK**. Filtrerar bort de allra minsta förhoppningsbolagen där kursen styrs av småsparare på forum.
-    *   **Lista:** Endast bolag noterade på Large, Mid eller Small Cap. Inga listor med sämre granskning (t.ex. Spotlight eller First North).
-    *   **Piotroski F-Score (Kvalitet):** Bolaget måste ha en **F-Score på minst 5** (av 9). Detta är robotens inbyggda lögndetektor. En F-Score under 5 indikerar fallande marginaler, ökad skuldsättning eller utspädning. De bolagen slängs i papperskorgen oavsett hur billiga de är.
-    *   **Svartlista:** Om du manuellt har lagt in ett bolag (t.ex. `SBB B`) i sidomenyns svartlista, plockas det bort direkt.
+    *   **Börsvärde & Lista:** Endast likvida bolag (Börsvärde > 500 MSEK) på Large, Mid eller Small Cap. Inga listor med sämre granskning.
+    *   **Bokföringshälsa (Piotroski F-Score >= 5):** Robotens inbyggda lögndetektor. En F-Score under 5 indikerar fallande marginaler eller ökad skuldsättning. Dessa bolag slängs direkt.
+    *   **Lönsamhetskrav (ROIC > 0):** Bolaget måste kasta av positiv Return on Invested Capital. Kvantmaskinen investerar inte i kapitalförstörare.
+    *   **Fundamentalt Momentum (Tillväxtkrav):** Bolaget *måste* bevisa att affären växer rent operativt, inte bara i aktiekurs. Både **Vinst/Aktie Utveck. 1år > 0%** och **Omsättning Utveck. 1år > 0%** krävs. Bolag som krymper kastas, oavsett hur hög deras utdelning är.
+    *   **Svartlista:** Manuellt tillagda bolag (t.ex. `SBB B`) plockas bort oavsett mätetal.
     """)
     
     st.markdown("---")
     
-    st.header("📈 Strategi 1: Trending Value")
+    st.header("📈 Strategi 1: Trending Value (Kvalitet till Reapris)")
     st.markdown("""
-    *Syfte: Hitta aktier som är absurt billiga rent fundamentalt, men där marknaden precis har börjat handla upp dem (värde + momentum).*
+    *Syfte: Hitta högkvalitativa, växande bolag som marknaden för tillfället har prissatt helt fel.*
     
-    1.  **Värderings-Scoring (Composite Value):** Kvantmaskinen rankar alla godkända bolag från 1 (billigast) till X (dyrast) baserat på fem olika nyckeltal:
-        *   **P/E (Price/Earnings):** Aktiekurs i förhållande till vinst.
-        *   **P/S (Price/Sales):** Aktiekurs i förhållande till försäljning.
-        *   **P/B (Price/Book):** Aktiekurs i förhållande till eget kapital (substans).
-        *   **P/FCF (Price/Free Cash Flow):** Aktiekurs i förhållande till fritt kassaflöde (faktiska pengar i handen).
-        *   **EV/EBITDA:** Företagets skuldjusterade värde i förhållande till rörelseresultatet före avskrivningar. (Ofta det bästa måttet för uppköp).
-    2.  **Straff:** Om ett bolag går med förlust (negativt värde) eller saknar data, straffar koden bolaget med ett artificiellt värde på `5000` så att det hamnar längst ner i rankingen.
-    3.  **Vaskningen:** Roboten slår ihop rankingen för alla fem nyckeltal till en *Total Rank*. De 40 aktier med lägst Total Rank går vidare till finalen.
-    4.  **Pris-Momentum (Urskiljningen):** De 40 billigaste bolagen sorteras därefter utifrån **Sammansatt Momentum** (snittet av kursutvecklingen på 3, 6 och 12 månader).
-    5.  **Resultat:** De 10 aktierna med högst momentum från värde-korgen blir din köplista.
+    Eftersom det Globala Basfiltret redan har rensat bort alla bolag som krymper, innebär detta att Värde-strategin numera hittar **växande bolag (Growth) till djupt rabatterade värderingar**. 
+    
+    1.  **Värderings-Scoring:** Alla de godkända (och växande) bolagen rankas utifrån P/E, P/S, P/B, P/FCF och EV/EBITDA.
+    2.  **Vaskningen:** Roboten slår ihop rankingen för alla fem nyckeltal. De 40 bolag med bäst underliggande tillväxt kontra pris går till final.
+    3.  **Pris-Momentum:** De 40 finalisterna sorteras sedan på **Sammansatt Momentum** (snittet av kursutvecklingen på 3, 6 och 12 månader). Vi köper alltså inte det som är billigast och faller, utan de djupt undervärderade tillväxtbolag som marknaden just nu håller på att upptäcka.
     """)
     
     st.markdown("---")
 
-    st.header("💸 Strategi 2: Trendande Utdelning")
+    st.header("💸 Strategi 2: Trendande Utdelning (Säker Direktavkastning)")
     st.markdown("""
-    *Syfte: Fånga bolag som delar ut mycket kontanter till ägarna, utan att kliva in i bolag där utdelningen riskerar att sänkas på grund av kris.*
+    *Syfte: Fånga bolag som delar ut mycket kontanter till ägarna, utan att kliva i klassiska "utdelningsfällor".*
     
-    1.  **Avkastningskravet:** Maskinen sorterar alla bolag utifrån **Direktavkastning (%)**. Den plockar rakt av ut de 40 bolagen på börsen som delar ut mest (efter att basfiltret, inkl. F-score, rensat bort riskbolagen).
-    2.  **Momentum-filtret:** Hög utdelning kan vara en illusion om aktiekursen fritt faller. Koden sorterar därför dessa 40 bolag på **Sammansatt Momentum** (snittet av 3m, 6m, 12m).
-    3.  **Resultat:** De 10 bolagen som ger högst utdelning OCH befinner sig i en positiv trend (stigande aktiekurs) plockas fram till din köplista.
+    Många utdelningsinvesterare bränner sig på bolag med extremt hög yield där vinsten egentligen har utraderats. Genom vårt Globala Basfilter (ROIC > 0, Vinsttillväxt > 0) garanteras du att **utdelningen täcks av faktisk, växande vinst**.
+    
+    1.  **Avkastningskravet:** Maskinen letar fram de 40 bolag som delar ut mest (**Direktavkastning %**) bland de starka kvalitetsbolag som överlevde basfiltret.
+    2.  **Momentum-filtret:** Även säkra utdelare kan hamna i onåd. Koden sorterar dessa 40 bolag på **Sammansatt Momentum**. 
+    3.  **Resultat:** Kvantmaskinen serverar de 10 bolagen som ger marknadens absolut bästa utdelning bland de företag som bevisligen växer och stiger i kurs.
     """)
     
     st.markdown("---")
 
-    st.header("⚡ Strategi 3: Sammansatt Momentum (Med Kvalitet & Fundamenta)")
+    st.header("⚡ Strategi 3: Sammansatt Momentum (Pure Price Action på Kvalitet)")
     st.markdown("""
-    *Syfte: Hitta marknadens absoluta vinnare just nu. Bolag som stiger kraftigt i pris, backat av en urstark underliggande affär.*
+    *Syfte: Hitta marknadens absolut hetaste bolag och rida på trenden – med extrem selektering i grunden.*
     
-    Momentum-strategin är den mest aggressiva och bygger på att vinnare tenderar att fortsätta vinna. Men för att undvika "pump-and-dump" krävs underliggande styrka.
+    Tidigare köpte Momentum-strategin det som gick upp snabbast, vilket ibland innebar ohälsosamma "pump and dump"-aktier. Genom de nya kraven på F-Score, Vinst- och Omsättningstillväxt backas numera prisuppgången upp av stenhårda fundamenta.
     
-    1.  **Fundamentalt Momentum (Tillväxtkravet):** Bolaget måste inte bara stiga i pris på skärmen, verksamheten måste också växa. Maskinen kräver att bolaget har:
-        *   **Vinsttillväxt:** (Vinst/Aktie Utveck. 1år > 0%) – Bolaget tjänar mer pengar nu än för ett år sedan.
-        *   **Omsättningstillväxt:** (Omsättning Utveck. 1år > 0%) – Bolaget säljer för mer nu än för ett år sedan (kan inte manipuleras med bokföring lika lätt som vinst).
-    2.  **Kvalitet (Avkastning på Investerat Kapital):** Vi vill bara rida på trender i lönsamma bolag. Koden sorterar bort bolag som har låg lönsamhet genom att kräva en **ROIC (Return on Invested Capital)** överstigande 0 (eller högre, beroende på hur vi trimmar filtret). 
-    3.  **Sammansatt Pris-Momentum:** De bolag som överlever kvalitets- och tillväxtfiltret sorteras sedan på marknadens faktiska efterfrågan: **Snittet av kursutvecklingen på 3, 6 och 12 månader**. 
-    4.  **Resultat:** De 10 bolag som har högst tekniskt momentum, backat av tillväxt i både vinst och omsättning, presenteras som köpkandidater.
+    1.  **Momentum-Mätning:** När basfiltret (Tillväxt, ROIC, F-Score) har plockat fram gräddan av Stockholmsbörsen, sorteras de rakt av på vem som drar till sig allra mest kapital just nu.
+    2.  **Snitt över tid:** Maskinen beräknar **Sammansatt Momentum** (3, 6 och 12 månader) för att skilja mellan dagsländor och äkta strukturella trender.
+    3.  **Resultat:** Du investerar i de 10 bolag som har högst tekniskt momentum på börsen, vilket är en tryggare strategi nu när de i grunden måste vara extremt välmående bolag.
     """)
 
 # --- SIDA 6, 7, 8: STRATEGIKALKYLATORERNA ---
@@ -1109,21 +1113,36 @@ elif "Strategi" in meny_val:
     strat_typ = "Value" if "Value" in meny_val else "Utdelning" if "Utdelning" in meny_val else "Momentum"
     
     if uppladdad_fil:
-        with st.spinner("Laddar fil, applicerar Basfilter (Piotroski F-Score > 4) och Svartlista..."):
+        with st.spinner("Laddar fil, applicerar Globala Basfiltret (F-Score, Tillväxt, ROIC) och Svartlista..."):
             df, k_namn, k_tick, k_kurs = ladda_och_tvatta_basdata(uppladdad_fil)
             
             # --- MANUELL SVARTLISTA ---
             if svartlista:
                 df = df[~df[k_tick].astype(str).str.upper().str.strip().isin(svartlista)].copy()
                 
-            # --- F-SCORE FILTER (KVALITET) ---
+            # --- DET GLOBALA BASFILTRET (GÄLLER NU ALLA STRATEGIER) ---
             k_fscore = next((c for c in df.columns if 'f-score' in c.lower()), None)
+            k_vinst_tillv = next((c for c in df.columns if 'vinst' in c.lower() and '1år' in c.lower()), None)
+            k_oms_tillv = next((c for c in df.columns if 'omsättning' in c.lower() and '1år' in c.lower()), None)
+            k_roic = next((c for c in df.columns if 'roic' in c.lower()), None)
+            
+            # 1. F-Score > 4
             if k_fscore:
                 df[k_fscore] = pd.to_numeric(df[k_fscore], errors='coerce').fillna(0)
                 df = df[df[k_fscore] >= 5].copy()
-                st.info(f"🛡️ **Kvalitetsfilter Aktivt:** Piotroski F-score filtrerade precis bort skräpbolagen. {len(df)} bolag kvarstår med stark finansiell hälsa (F-score 5-9).")
-            else:
-                st.warning("⚠️ Hittade ingen kolumn för 'F-Score' i din fil. Kvalitetsfiltret kunde inte appliceras.")
+                
+            # 2. Vinst & Omsättningstillväxt > 0
+            if k_vinst_tillv and k_oms_tillv:
+                df[k_vinst_tillv] = pd.to_numeric(df[k_vinst_tillv], errors='coerce').fillna(-100)
+                df[k_oms_tillv] = pd.to_numeric(df[k_oms_tillv], errors='coerce').fillna(-100)
+                df = df[(df[k_vinst_tillv] > 0) & (df[k_oms_tillv] > 0)].copy()
+                
+            # 3. ROIC > 0
+            if k_roic:
+                df[k_roic] = pd.to_numeric(df[k_roic], errors='coerce').fillna(-100)
+                df = df[df[k_roic] > 0].copy()
+                
+            st.info(f"🛡️ **Globala Basfiltret Aktivt:** Oavsett strategi har koden rensat bort allt utom bolag med F-score över 4, positiv ROIC samt positiv Vinst- och Omsättningstillväxt. {len(df)} högkvalitativa bolag kvarstår att screena.")
             
             with st.spinner(f"Beräknar {strat_typ}-algoritmen..."):
                 if strat_typ == "Value":
@@ -1148,20 +1167,6 @@ elif "Strategi" in meny_val:
                     topp_alla = df.nlargest(40, k_utd).sort_values(by='Momentum', ascending=False)
                     
                 elif strat_typ == "Momentum":
-                    # --- Fundamentalt Momentum Filter (Tillväxt) ---
-                    k_vinst_tillv = next((c for c in df.columns if 'vinst' in c.lower() and '1år' in c.lower()), None)
-                    k_oms_tillv = next((c for c in df.columns if 'omsättning' in c.lower() and '1år' in c.lower()), None)
-                    k_roic = next((c for c in df.columns if 'roic' in c.lower()), None)
-                    
-                    if k_vinst_tillv and k_oms_tillv:
-                        df[k_vinst_tillv] = pd.to_numeric(df[k_vinst_tillv], errors='coerce').fillna(-100)
-                        df[k_oms_tillv] = pd.to_numeric(df[k_oms_tillv], errors='coerce').fillna(-100)
-                        df = df[(df[k_vinst_tillv] > 0) & (df[k_oms_tillv] > 0)].copy()
-                    
-                    if k_roic:
-                        df[k_roic] = pd.to_numeric(df[k_roic], errors='coerce').fillna(-100)
-                        df = df[df[k_roic] > 0].copy()
-                        
                     k_3m, k_6m, k_12m = next((c for c in df.columns if '3m' in c.lower()), df.columns[0]), next((c for c in df.columns if '6m' in c.lower()), df.columns[0]), next((c for c in df.columns if '1år' in c.lower() or '12m' in c.lower()), df.columns[0])
                     df['Momentum'] = (pd.to_numeric(df[k_3m], errors='coerce').fillna(0) + pd.to_numeric(df[k_6m], errors='coerce').fillna(0) + pd.to_numeric(df[k_12m], errors='coerce').fillna(0)) / 3
                     topp_alla = df.sort_values(by='Momentum', ascending=False).head(40)
@@ -1203,8 +1208,8 @@ elif "Strategi" in meny_val:
         display_cols = [k_namn, k_tick, k_kurs]
         if k_fscore in topp_risk.columns: display_cols.append(k_fscore)
         if strat_typ == "Utdelning" and k_utd in topp_risk.columns: display_cols.append(k_utd)
-        if strat_typ == "Momentum" and k_vinst_tillv in topp_risk.columns: display_cols.append(k_vinst_tillv)
-        if strat_typ == "Momentum" and k_roic in topp_risk.columns: display_cols.append(k_roic)
+        if k_vinst_tillv in topp_risk.columns: display_cols.append(k_vinst_tillv)
+        if k_roic in topp_risk.columns: display_cols.append(k_roic)
         
         display_cols.extend(['Momentum', 'Årlig Volatilitet', 'Sharpe (Rf=3%)'])
         
@@ -1249,7 +1254,6 @@ elif meny_val == "⚖️ Ombalansering":
         if antal_malbolag > 0:
             st.session_state['tot_v'] = totalt_portfolj_varde
             
-            # Beräkna Inverse Volatility Vikter
             if '_inv_vol' in df_mal.columns:
                 total_inv_vol = df_mal['_inv_vol'].sum()
                 df_mal['Mål_Vikt'] = df_mal['_inv_vol'] / total_inv_vol if total_inv_vol > 0 else (1.0 / antal_malbolag)
@@ -1260,13 +1264,11 @@ elif meny_val == "⚖️ Ombalansering":
             
             ordrar, ny_p_rader = [], []
             
-            # 1. Hitta sälj
             for _, r in df_bef.iterrows():
                 if r['Ticker'] == 'KASSA': continue
                 if r['Ticker'] not in df_mal['Ticker'].values:
                     ordrar.append({"Bolagsnamn": r['Bolagsnamn'], "Ticker": r['Ticker'], "Handling": "🔴 SÄLJ ALLT", "Antal aktier": int(r['Antal']), "Kurs": r['Kurs'], "Total_SEK": r['Antal'] * r['Kurs']})
             
-            # 2. Hitta köp och ombalansering
             for _, r in df_mal.iterrows():
                 t, k, n = r['Ticker'], float(r['Kurs']), r['Bolagsnamn']
                 mal_sek = r['Målvärde_SEK']
