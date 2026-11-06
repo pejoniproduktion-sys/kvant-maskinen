@@ -8,7 +8,7 @@ on:
 
 jobs:
   update-portfolio:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Uppdaterad: Låst till stabil version för att slippa varningar
 
     steps:
     - name: Check out kod
