@@ -1,32 +1,24 @@
-name: Månadsvis AI-Forskning
-
+name: ai-research
 on:
-  schedule:
-    - cron: '0 17 25 * *'
   workflow_dispatch:
+  # schedule: ... (din eventuella tidtabell)
 
 jobs:
-  ai-research:
-    runs-on: ubuntu-latest
-
+  build:
+    runs-on: ubuntu-24.04 # Uppdaterad från ubuntu-latest för att ta bort notisen
     steps:
-    - name: Check out kod
-      uses: actions/checkout@v4
-
-    - name: Installera Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Installera bibliotek
-      run: |
-        python -m pip install --upgrade pip
-        pip install gspread google-auth google-genai tavily-python
-
-    - name: Kor AI-forskning
-      env:
-        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-        GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
-        TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      run: python monthly_research.py
+      - uses: actions/checkout@v4 # Uppdaterad till v4 för fullt Node 20/24-stöd
+      - uses: actions/setup-python@v5 # Uppdaterad till v5 för fullt Node 20/24-stöd
+        with:
+          python-version: '3.x' # (eller den specifika version du använder)
+          
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        
+      - name: Run monthly research
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
+        run: python monthly_research.py
