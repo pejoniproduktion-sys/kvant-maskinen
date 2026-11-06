@@ -4,6 +4,7 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 from google import genai
+from google.genai import types  # <-- NY IMPORT FÖR THINKING CONFIG
 from tavily import TavilyClient
 
 # ==========================================
@@ -112,7 +113,9 @@ def run_research():
     Var objektiv, professionell och använd emojis stilfullt för att göra texten pedagogisk och lättläst.
     """
     
+    # UPPDATERAT: Ny lista med den senaste modellen högst upp
     modeller_att_testa = [
+        'gemini-3.5-flash-lite',
         'gemini-2.5-flash',
         'gemini-2.0-flash',
         'gemini-1.5-flash-002',
@@ -125,15 +128,21 @@ def run_research():
     for m in modeller_att_testa:
         try:
             print(f"⏳ Försöker ansluta till modell: {m}...")
+            
+            # UPPDATERAT: Nytt anrop med configuration för thinking_level
             response = gemini_client.models.generate_content(
                 model=m,
                 contents=prompt,
+                config=types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(thinking_level="HIGH")
+                )
             )
+            
             ai_text = response.text
             print(f"✅ Succé! Modellen '{m}' accepterades och genererade analysen.")
             break 
         except Exception as e:
-            print(f"❌ Modellen '{m}' nekades. Testar nästa...")
+            print(f"❌ Modellen '{m}' nekades. Testar nästa... Fel: {e}")
             
     if not ai_text:
         print("🚨 KATASTROF: Ingen av Googles modeller var tillgängliga. Analysen avbryts.")
